@@ -1,0 +1,17 @@
+CoreFoundation*
+Foundation*
+
+CoreAnimation*
+CoreMedia*
+CoreGraphics*
+CoreImage*
+CoreData*
+
+QuartzCore*
+Quartz*
+
+AVFoundation*
+AVKit*
+
+AppKit*
+
