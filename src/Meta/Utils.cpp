@@ -5,7 +5,7 @@
 namespace Meta {
 using namespace std;
 
-bool Utils::isMacOSBuild = strstr(getenv("SDKROOT"), "MacOSX");
+bool Utils::isMacOSBuild = true;
 Version Utils::buildTarget = {};
 Version Utils::swiftVersion = {};
 

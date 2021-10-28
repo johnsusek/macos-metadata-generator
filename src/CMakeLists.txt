@@ -29,7 +29,6 @@ set(GENERATOR_HEADERS
     TypeScript/DocSetManager.h
     JSExport/JSExportDefinitionWriter.h
     JSExport/JSExportFormatter.h
-    JSExport/JSExportMeta.h
     Utils/fileStream.h
     Utils/memoryStream.h
     Utils/Noncopyable.h
@@ -64,7 +63,6 @@ set(GENERATOR_SOURCES
     Meta/ValidateMetaTypeVisitor.cpp
     JSExport/JSExportDefinitionWriter.cpp
     JSExport/JSExportFormatter.cpp
-    JSExport/JSExportMeta.cpp
     TypeScript/DefinitionWriter.cpp
     TypeScript/DocSetManager.cpp
     Utils/fileStream.cpp

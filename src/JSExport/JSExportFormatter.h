@@ -12,6 +12,12 @@
 namespace TypeScript {
 class JSExportFormatter {
 public:
+  enum ParamCallType {
+    Definition = 0, // initWithFrame(_: CGRect)
+    Implementation, // initWithFrame(_ frame: CGRect)
+    Call // initWithFrame(frame)
+  };
+  
   static JSExportFormatter current;
   static std::unordered_set<std::string> nonNullable;
   static void stripModifiersFromPointerType(std::string& name);
@@ -24,8 +30,9 @@ public:
   std::string formatTypeAnonymous(const ::Meta::Type& type, const clang::QualType pointerType);
   std::string formatType(const ::Meta::Type& type, const clang::QualType pointerType, const bool ignorePointerType = false);
   std::string getFunctionProto(const std::vector<::Meta::Type*>& signature, const clang::QualType qualType);
+  std::string getFunctionProtoCall(std::string paramName, const std::vector<::Meta::Type*>& signature, const clang::QualType qualType);
   std::string sanitizeIdentifierForSwift(const std::string& identifierName);
-  std::string getMethodParams(MethodMeta* meta, BaseClassMeta* owner, bool forConstructor = false);
+  std::string getMethodParams(MethodMeta* meta, BaseClassMeta* owner, ParamCallType callType = ParamCallType::Definition);
   std::string getNullabilitySymbol(PropertyMeta* meta, BaseClassMeta* owner);
   std::string getTypeNullability(clang::ParmVarDecl* decl, MethodMeta* meta);
   std::string getTypeNullability(MethodMeta* method, BaseClassMeta* owner);

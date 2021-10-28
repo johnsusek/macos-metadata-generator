@@ -131,20 +131,8 @@ public:
     std::string name;
     std::string demangledName;
     std::string jsName;
-    std::string jsNameRenamed;
     std::vector<std::string> argLabels;
     bool isRenamed;
-//    std::string swiftModule;
-//    std::string swiftClass;
-//    std::string swiftName;
-    
-//    std::vector<std::string> swiftNameTokens;
-
-    // We need to keep track of this because renamed fns must have
-    // a `@objc (selector:)` attribute matching their original name
-//    bool isRenamed = false;
-  
-//    std::vector<std::string> renamedTo;
     std::string fileName;
     bool includeSelector = false;
     clang::Module* module = nullptr;
@@ -172,6 +160,34 @@ public:
         return (this->flags & flags) == flags;
     }
 
+    bool hasParamOfType(std::string typeStr) const
+    {
+      const clang::ObjCMethodDecl& methodDecl = *clang::dyn_cast<clang::ObjCMethodDecl>(this->declaration);
+      const auto parameters = methodDecl.parameters();
+      size_t lastParamIndex = this->getFlags(::Meta::MetaFlags::MethodHasErrorOutParameter) ? (parameters.size() - 1) : parameters.size();
+      
+      for (size_t i = 0; i < lastParamIndex; i++) {
+        clang::ParmVarDecl parmVar = *parameters[i];
+        clang::QualType qualType = parmVar.getType();
+        std::string paramTypeStr = qualType.getAsString();
+        
+        if (paramTypeStr.substr(0, typeStr.size()) == typeStr) {
+          return true;
+        }
+      }
+      
+      return false;
+    }
+  
+    bool isInit() const
+    {
+      bool isInit = this->getFlags(MethodIsInitializer)
+        || this->getFlags(MethodReturnsSelf)
+        || this->jsName == "create";
+
+      return isInit;
+    }
+  
     void setFlags(MetaFlags flags, bool value)
     {
         if (value) {
@@ -260,7 +276,7 @@ public:
         this->type = MetaType::Method;
     }
 
-    // just a more convenient way to get the selector of method
+  // just a more convenient way to get the selector of method
   std::string getSelector() const
   {
     return this->name;
@@ -269,96 +285,8 @@ public:
   // Get the replacement selector name from api notes and attrs
   std::string getReplacement();
 
-//  bool isAllUpper(std::string& s) const {
-//    return std::all_of(s.begin(), s.end(), [](unsigned char c){ return std::isupper(c); });
-//  }
-
-//  std::string bridgedName(bool hasImpl = false) const
-//  {
-//    bool isCreate = getFlags(MethodIsInitializer);
-//
-//    std::vector<std::string> selectorTokens;
-//
-//    if (isCreate) {
-//      selectorTokens = { "create" };
-//      StringUtils::split(this->constructorTokens, ':', std::back_inserter(selectorTokens));
-//    }
-////    else if (hasImpl) {
-////      // Has a JSValue or JSManagedValue param
-////      // Need individual tokens to insert "With" after first, and we decide
-////      // the names of these fns anyways
-////      if (this->renamedTo.size() == 1) {
-////        StringUtils::split(this->renamedTo[0], ':', std::back_inserter(selectorTokens));
-////      }
-////      else {
-////        selectorTokens = this->renamedTo;
-////      }
-////    }
-//    else {
-//      // For methods, we use the original (objc) selector (this->name) so that e.g.
-//      //
-//      // @objc (insertArrangedSubview:atIndex:) func insertArrangedSubview(_: NSView, at: Int)
-//      //
-//      // returns `insertArrangedSubviewAtIndex` instead of `insertArrangedSubviewAt`
-//      // to match the JSExport bridging behavior
-//
-//      StringUtils::split(this->name, ':', std::back_inserter(selectorTokens));
-//    }
-//
-//    size_t firstNamedParamPosition = 0;
-//
-//    if (selectorTokens.size() > 1) {
-//      if (selectorTokens[1] == "_") {
-//        firstNamedParamPosition = 1;
-//      }
-//    }
-//
-//    std::string name = "";
-//    std::map<std::string, bool> labelPrefixes = {
-//      { "of", true },
-//      { "for", true }
-//    };
-//
-//    for (size_t i = 0; i < selectorTokens.size(); i++) {
-//      auto paramName = selectorTokens[i];
-//
-//      if (paramName == "_") {
-//        continue;
-//      }
-//
-//      if (i == 0 && isCreate) {
-//        paramName = "create";
-//      }
-//      else if (i == 1 && (isCreate || hasImpl) && !labelPrefixes[paramName]) {
-//        name += "With";
-//      }
-//
-//      //
-//      // PamelCase any parameters written after the first,
-//      // so constructors end up like `createWithUrl` instead
-//      // of `createWithURL`
-//      //
-//      // URL -> Url
-//      // fooBarBaz -> FooBarBaz
-//      //
-//      if (i > firstNamedParamPosition) {
-//        // URL -> url
-//        if (this->isAllUpper(paramName)) {
-//          std::transform(paramName.begin(), paramName.end(), paramName.begin(), ::tolower);
-//        }
-//
-//        // url -> Url
-//        paramName[0] = toupper(paramName[0]);
-//      }
-//
-//      name += paramName;
-//    }
-//
-//    return name;
-//  }
-//
   std::vector<Type*> signature;
-  std::string constructorTokens;
+  std::vector<std::string> constructorTokens;
 
   virtual void visit(MetaVisitor* visitor) override;
 };

@@ -12,7 +12,6 @@
 #include "TypeScript/DocSetManager.h"
 #include "Vue/VueComponentDefinitionWriter.h"
 #include "JSExport/JSExportDefinitionWriter.h"
-#include "JSExport/JSExportMeta.h"
 #include "Yaml/YamlSerializer.h"
 #include <clang/Frontend/CompilerInstance.h>
 #include <clang/Tooling/Tooling.h>
@@ -124,8 +123,10 @@ public:
       string docSetPath = cla_docSetFile.empty() ? "" : cla_docSetFile.getValue();
 
       for (pair<clang::Module*, vector<Meta::Meta*> >& modulePair : metasByModules) {
+        cout << modulePair.first->Name << "... ";
         TypeScript::JSExportDefinitionWriter jsDefinitionWriter(modulePair, _visitor.getMetaFactory().getTypeFactory(), docSetPath);
         jsDefinitionWriter.write();
+        cout << std::to_string(modulePair.second.size()) << " done" << endl;
       }
     }
 
@@ -339,7 +340,7 @@ int main(int argc, const char** argv, char **envp)
     llvm::cl::ParseCommandLineOptions(argc, argv);
     assert(cla_clangArgumentsDelimiter.getValue() == "Xclang");
 
-    TypeScript::JSExportMeta::outputJSEFolder = cla_outputJSEFolder.getValue();
+    TypeScript::JSExportDefinitionWriter::outputJSEFolder = cla_outputJSEFolder.getValue();
     TypeScript::VueComponentDefinitionWriter::outputVueFolder = cla_outputVueFolder.getValue();
 
     // Log Metadata Genrator Arguments

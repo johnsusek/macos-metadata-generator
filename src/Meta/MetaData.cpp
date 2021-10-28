@@ -20,9 +20,10 @@ namespace Meta {
 //
 // Using only the parsed objc attrs provides an incomplete picture so we need
 // to use outside metadata
-
-string sdkRoot = getenv("SDKROOT");
-string attrLookupRoot = getenv("ATTRIBUTESPATH");
+string sdkVersion = getenv("SDKVERSION");
+string sdkRoot = "/Library/Developer/CommandLineTools/SDKs/MacOSX" + sdkVersion + ".sdk";
+string dataRoot = getenv("DATAPATH");
+string attrLookupRoot = dataRoot + "/attributes";
 
 map<string, YAML::Node> MetaData::attributesLookup = {};
 map<string, string> MetaData::apiNotes = {};
@@ -406,6 +407,11 @@ string MetaData::renamedName(string name, string ownerKey) {
   newName = std::regex_replace(newName, re1, ":");
   newName = std::regex_replace(newName, re2, "");
   
+  // Use `create` instead of `init` for initializers,
+  // since JSExport doesn't work on `init`
+  std::regex ire("^init:");
+  newName = std::regex_replace(newName, ire, "create:");
+  
   return newName;
 }
 
@@ -424,6 +430,11 @@ string MetaData::dumpDeclComments(::Meta::Meta* meta, ::Meta::Meta* owner) {
   out += "    - jsName: " + meta->jsName + "\n";
   out += "    - name: " + meta->name + "\n";
   out += "    - argLabels: " + StringUtils::join(meta->argLabels, ", ") + "\n";
+  
+  if (meta->is(MetaType::Method)) {
+    MethodMeta& method = meta->as<MethodMeta>();
+    out += "    - constructorTokens: " + StringUtils::join(method.constructorTokens, ", ") + "\n";
+  }
   
   bool matchedAttrLookup = false;
   

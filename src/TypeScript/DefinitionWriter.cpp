@@ -7,7 +7,6 @@
 #include "JSExport/JSExportDefinitionWriter.h"
 #include "JSExport/JSExportFormatter.h"
 #include "Vue/VueComponentFormatter.h"
-#include "JSExport/JSExportMeta.h"
 #include "yaml-cpp/yaml.h"
 #include <algorithm>
 #include <clang/AST/DeclObjC.h>

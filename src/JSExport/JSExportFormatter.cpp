@@ -1,6 +1,5 @@
 #include "TypeScript/DefinitionWriter.h"
 #include "JSExportDefinitionWriter.h"
-#include "JSExportMeta.h"
 #include "Meta/Utils.h"
 #include "Meta/MetaFactory.h"
 #include "Meta/MetaData.h"
@@ -37,7 +36,8 @@ static map<string, string> bridgeNames = {
   { "int32_t", "Int32it" },
   { "uint64_t", "UInt64" },
   { "int64_t", "Int64" },
-  { "int", "Int" }
+  { "int", "Int" },
+  { "NSConnection", "NSXPCConnection" }
 };
 
 string JSExportFormatter::nameForJSExport(const string& jsName)
@@ -244,12 +244,17 @@ string JSExportFormatter::formatTypePointer(const PointerType& pointerType, cons
   string unsafeType = "";
 
   if (pointerQualTypeName.substr(0, 12) == "const void *") {
-    unsafeType = "UnsafeRawPointer";
+    return "UnsafeRawPointer";
   }
   else if (pointerType.innerType->is(TypeVoid)) {
     return "UnsafeMutableRawPointer";
   }
   
+  regex autoreleasingRe("^\\w+<\\w+,id>$");
+  if (regex_match(name, autoreleasingRe)) {
+    out += "Autoreleasing";
+  }
+
   bool hasInnerPointer = pointerType.innerType->is(TypePointer);
   
   if (hasInnerPointer) {
@@ -258,7 +263,6 @@ string JSExportFormatter::formatTypePointer(const PointerType& pointerType, cons
   
   bool isInnerNullable = false;
   bool isPointerClassName = false;
-
   auto typePtr = pointerQualType.getTypePtrOrNull();
 
   regex pointerClassName(".*Pointer$");
@@ -290,6 +294,9 @@ string JSExportFormatter::formatTypePointer(const PointerType& pointerType, cons
   else if (name == "String") {
     out += "NSString";
   }
+  else if (name.substr(0, 13) == "NSDictionary<") {
+    out += "NSDictionary";
+  }
   else {
     out += nameForJSExport(name);
   }
@@ -316,10 +323,6 @@ string JSExportFormatter::formatTypePointer(const PointerType& pointerType, cons
 
 string JSExportFormatter::formatType(const Type& type, const clang::QualType pointerType, const bool ignorePointerType)
 {
-  if (pointerType.getAsString().find("instancetype ", 0) != string::npos) {
-    return "Self";
-  }
-  
   string typeStr = "";
   
   switch (type.getType()) {
@@ -413,21 +416,17 @@ string JSExportFormatter::formatType(const Type& type, const clang::QualType poi
       typeStr = "Protocol";
       break;
     case TypeClass: {
-      auto it = type.as<PointerType>().innerType;
       auto pointeeType = pointerType->getPointeeType();
-      
-      if (it != NULL && pointeeType.getAsString() != "Class") {
-        string str = pointeeType.getAsString();
-        str.resize(str.size() - 1);
-        str.replace(0, 6, "");
-        typeStr = MetaData::lookupApiNotes(nameForJSExport(str)) + ".Type";
-      }
-      else if (pointeeType.getAsString() == "Class") {
+      string pointeeTypeStr = pointeeType.getAsString();
+      stripModifiersFromPointerType(pointeeTypeStr);
+      regex re("^\\w+<(\\w+)>$");
+      string pointeeTypeInnerStr = regex_replace(pointeeTypeStr, re, "$1");
+
+      if (pointeeTypeStr == "Class" || pointeeTypeInnerStr == "Class") {
         return "AnyClass";
       }
-      else {
-        typeStr = "NSObject";
-      }
+      
+      typeStr = MetaData::lookupApiNotes(nameForJSExport(pointeeTypeInnerStr)) + ".Type";
       break;
     }
     case TypeStruct:
@@ -471,8 +470,10 @@ string JSExportFormatter::formatType(const Type& type, const clang::QualType poi
     case TypeAnonymousUnion:
       typeStr = formatTypeAnonymous(type, pointerType);
       break;
-    case TypeVaList:
     case TypeInstancetype:
+      typeStr = "Self";
+      break;
+    case TypeVaList:
     default:
       break;
   }
@@ -522,15 +523,15 @@ string JSExportFormatter::formatTypeInterface(const Type& type, const clang::Qua
   if (DefinitionWriter::hasClosedGenerics(type)) {
     const InterfaceType& interfaceType = type.as<InterfaceType>();
     
-    if (interfaceName == "NSArray" || interfaceName == "Array") {
+    if (interfaceName == "NSArray" || interfaceName == "NSMutableArray" || interfaceName == "Array") {
       string out = "";
       out = "[";
-      out += formatType(*interfaceType.typeArguments[0], pointerQualType);
+      out += formatType(*interfaceType.typeArguments[0], pointerQualType, ignorePointerType);
       out += "]";
       return out;
     }
     
-    if (interfaceName == "NSDictionary" || interfaceName == "Dictionary") {
+    if (interfaceName == "NSDictionary" || interfaceName == "NSMutableDictionary" || interfaceName == "Dictionary") {
       string out = "";
       out = "[";
       out += formatType(*interfaceType.typeArguments[0], pointerQualType, ignorePointerType);
@@ -538,6 +539,10 @@ string JSExportFormatter::formatTypeInterface(const Type& type, const clang::Qua
       out += formatType(*interfaceType.typeArguments[1], pointerQualType, true);
       out += "]";
       return out;
+    }
+    
+    if (interfaceName == "NSLayoutAnchor") {
+      return "JSValue";
     }
     
     string typeArgName;
@@ -577,24 +582,42 @@ string JSExportFormatter::formatTypeInterface(const Type& type, const clang::Qua
     //
     auto typePtrInterfaceType = typePtr->getAsObjCInterfacePointerType();
     auto interfaceObjectType = typePtrInterfaceType->getObjectType();
-    auto ojectArgs = interfaceObjectType->getTypeArgsAsWritten();
+    auto objectArgs = interfaceObjectType->getTypeArgsAsWritten();
 
-    if (ojectArgs.size()) {
-      string firstArg = ojectArgs[0].getAsString(); // `NSString *`
+    if (objectArgs.size()) {
+      auto argQualType = objectArgs[0];
+      string firstArg = argQualType.getAsString(); // `NSString *`
+      auto innerTypePtr = argQualType.getTypePtrOrNull();
+      if (innerTypePtr->isObjCObjectPointerType()) {
+        auto typeArgs = innerTypePtr->getAsObjCInterfacePointerType()->getObjectType()->getTypeArgsAsWritten();
+        if (typeArgs.size()) {
+          firstArg = typeArgs[0].getAsString();
+        }
+      }
+
       stripModifiersFromPointerType(firstArg); // `NSString`
+      
+      // NSView & NSViewSubclass
       if (interfaceName == "NSView") {
         firstArg = bitwiseView(firstArg);
       }
+      
       return nameForJSExport(MetaData::renamedName(firstArg)); // `String`;
     }
     else {
       string pointeeTypeName = typePtr->getPointeeType().getAsString();
-      if (interfaceName == "NSObject") {
-        stripModifiersFromPointerType(pointeeTypeName);
+      stripModifiersFromPointerType(pointeeTypeName);
+
+      if (pointeeTypeName == "NSArray") {
+        return "[Any]";
+      }
+      else if (pointeeTypeName == "NSDictionary") {
+        return "[AnyHashable: Any]";
+      }
+      else if (interfaceName == "NSObject") {
         return nameForJSExport(MetaData::renamedName(pointeeTypeName));
       }
       else if (interfaceName == "NSView") {
-        stripModifiersFromPointerType(pointeeTypeName);
         pointeeTypeName = bitwiseView(pointeeTypeName);
         return nameForJSExport(MetaData::renamedName(pointeeTypeName));
       }
@@ -612,8 +635,23 @@ string JSExportFormatter::formatTypeInterface(const Type& type, const clang::Qua
   throw logic_error(string("Misparsed interface definition '") + interfaceName + "'.");
 }
 
-string JSExportFormatter::getFunctionProto(const vector<Type*>& signature, const clang::QualType qualType)
-{
+unordered_set<string> valueTypes = {
+  { "Bool" },
+  { "String" },
+  { "Double" },
+  { "Int32" },
+  { "UInt32" },
+  { "Number" },
+  { "Date" },
+  { "Array" },
+  { "Dictionary" },
+  { "Point" },
+  { "Range" },
+  { "Rect" },
+  { "Size" }
+};
+
+string JSExportFormatter::getFunctionProtoCall(string paramName, const vector<Type*>& signature, const clang::QualType qualType) {
   // Change:
   // @objc @available(OSX 10.6, *) func enumerateObjectsUsingBlock(block: (p1: ObjectType, p2: Bool) => Void) -> Void
   
@@ -627,12 +665,87 @@ string JSExportFormatter::getFunctionProto(const vector<Type*>& signature, const
   //     return self.enumerateObjects(BridgeHelpers.VoidCallbackEnumerator(block))
   //   }
   // }
+
+  string output;
+    
+  output += "{ ";
+
+  if (signature.size() > 1) {
+    for (size_t i = 1; i < signature.size(); i++) {
+      output += "p" + std::to_string(i);
+      if (i < signature.size() - 1) {
+        output += ", ";
+      }
+    }
+
+    output += " in";
+  }
   
-  // TODO: Decide which BridgeHelpers.xxxCallbackEnumerator to use
-  ostringstream output;
-  output << "JSValue";
+  output += "\n";
+
+  auto& type = *signature[0];
   
-  return output.str();
+  string blockRetType = formatType(type, qualType, true);
+  
+  output += "      ";
+  
+  if (blockRetType != "Void") {
+    output += "if let res = ";
+  }
+  
+  output += paramName + ".call(withArguments: [";
+
+  for (size_t i = 1; i < signature.size(); i++) {
+    output += "p" + std::to_string(i) + " as AnyObject";
+    if (i < signature.size() - 1) {
+      output += ", ";
+    }
+  }
+
+  output += "])";
+
+  if (blockRetType != "Void") {
+    output += " { \n";
+    output += "        ";
+    
+    string interfaceName = "";
+    
+    if (type.is(TypeType::TypeInterface)) {
+      const InterfaceMeta& interface = *type.as<InterfaceType>().interface;
+      interfaceName = interface.jsName;
+    }
+    
+    if (type.is(TypeType::TypeEnum)) {
+      output += "return " + blockRetType + ".init(rawValue: Int(res.toInt32()))!\n";
+    }
+    else if (interfaceName == "Array") {
+      output += "return res.toArray()";
+      output += " as! " + blockRetType + " \n";
+    }
+    else if (interfaceName == "Dictionary") {
+      output += "return res.toDictionary()\n";
+      output += " as! " + blockRetType + " \n";
+    }
+    else if (valueTypes.find(blockRetType) == valueTypes.end()) {
+      output += "return res.toObjectOf(" + blockRetType + ".self)";
+      output += " as! " + blockRetType + " \n";
+    }
+    else {
+      output += "return res.to" + blockRetType + "()";
+    }
+    
+    output += "      }";
+  }
+
+  output += "\n";
+  output += "    }";
+
+  return output;
+}
+
+string JSExportFormatter::getFunctionProto(const vector<Type*>& signature, const clang::QualType qualType)
+{
+  return "JSValue";
 }
 
 string JSExportFormatter::sanitizeIdentifierForSwift(const string& identifierName)
@@ -645,65 +758,176 @@ string JSExportFormatter::sanitizeIdentifierForSwift(const string& identifierNam
   }
 }
 
-string JSExportFormatter::getMethodParams(MethodMeta* method, BaseClassMeta* owner, bool forCall) {
+string JSExportFormatter::getMethodParams(MethodMeta* method, BaseClassMeta* owner, ParamCallType callType) {
   string output = "(";
+  
   const clang::ObjCMethodDecl& methodDecl = *clang::dyn_cast<clang::ObjCMethodDecl>(method->declaration);
   const auto parameters = methodDecl.parameters();
+  
+  if (parameters.empty()) {
+    return "()";
+  }
+  
   size_t lastParamIndex = method->getFlags(::Meta::MetaFlags::MethodHasErrorOutParameter) ? (parameters.size() - 1) : parameters.size();
-  size_t numEmptyLabels = 0;
   size_t numLabels = method->argLabels.size();
-  size_t numUnLabeledArgs = lastParamIndex - numLabels;
 
+  bool isInit = method->getFlags(MethodIsInitializer) || method->getFlags(MethodReturnsSelf);
+  bool isInitWithTargetAction = isInit &&
+    numLabels >= 2 &&
+    method->argLabels[numLabels - 2] == "target" &&
+    method->argLabels[numLabels - 1] == "action";
+
+  size_t numUnLabeledArgs = lastParamIndex - numLabels;
+  size_t numEmptyLabels = 0;
+  
+  std::map<std::string, size_t> usedParams = {};
+  
   for (size_t i = 0; i < lastParamIndex; i++) {
+    if (isInitWithTargetAction && callType != Call && i >= lastParamIndex - 2) {
+      // remove the target and action params from the init,
+      // the cooresponding implementation will then pass nil for these
+      continue;
+    }
+    
     clang::ParmVarDecl parmVar = *parameters[i];
     clang::QualType qualType = parmVar.getType();
     string paramLabel;
     string paramName;
     bool hasUnlabeled = numUnLabeledArgs > numEmptyLabels;
     auto idxToLookForName = i - numEmptyLabels;
+    bool isGeneratedParamName = false;
 
     if (hasUnlabeled) {
-        paramLabel = "_";
-        numEmptyLabels++;
-        if (numLabels > 0) {
-          if (i < numLabels) {
-            paramName = method->argLabels[i];
-          }
-          else if (i < parameters.size()) {
-            cout << "Warning: fell back to param label instead of argument label for " << method->name << endl;
-            paramName = parameters[i]->getNameAsString();
-          }
-        }
+      paramLabel = "_";
+      numEmptyLabels++;
+    }
+    
+    if (method->getFlags(MethodIsInitializer) && method->name != "initByReferencingURL:" && method->name != "initWithCompressionOptions:") {
+      if (i < method->constructorTokens.size()) {
+        paramName = method->constructorTokens[i];
       }
-      else {
-        // We have to use objc selector labels for param names in bridge, to avoid
-        // "method has different argument labels from those required by protocol" errors
-        paramName = method->argLabels[idxToLookForName];
-        paramLabel = paramName;
+    }
+    else if (idxToLookForName < method->argLabels.size()) {
+      paramName = method->argLabels[idxToLookForName];
+    }
+    
+    // Manual fixes for create fns whose renamed params
+    // don't seem to be in any attrs or api notes? 
+    if (method->jsName == "createWithContainerClassDescription") {
+      if (method->constructorTokens[i] == "startSpecifier") {
+        paramName = "start";
       }
+      else if (method->constructorTokens[i] == "endSpecifier") {
+        paramName = "end";
+      }
+    }
+    else if (method->jsName == "createWithObjectSpecifier") {
+      if (method->constructorTokens[i] == "testObject") {
+        paramName = "test";
+      }
+    }
     
-    auto paramLabelParts = split2(paramLabel);
-    auto paramLabelFirst = paramLabelParts[0];
+    if (!hasUnlabeled) {
+      paramLabel = paramName;
+    }
+
+    if (paramName == "_") {
+      paramName = "p" + std::to_string(i);
+      isGeneratedParamName = true;
+    }
+        
+    if(usedParams[paramName] > 0) {
+      paramName += to_string(usedParams[paramName]);
+    }
     
-    output += sanitizeIdentifierForSwift(paramLabelFirst);
-    
-    // Param return type
-    output += ": ";
+    usedParams[paramName]++;
     
     auto& type = *method->signature[i+1];
-
-    if (DefinitionWriter::hasClosedGenerics(type)) {
-      output += "JSValue";
+    
+    bool ignorePointerType = false;
+    
+    if (owner->jsName == "Error") {
+      // domain wants `String` instead of `NSErrorDomain`
+      // userInfo wants `String` instead of `NSError.UserInfoKey`
+      if (paramName == "domain" || paramName == "userInfo") {
+        ignorePointerType = true;
+      }
     }
-    else {
-      string retTypeStr = formatType(type, qualType);
+
+    string retTypeStr = formatType(type, qualType, ignorePointerType);
+
+    if (callType == Call) {
+      // initWithFrame(frame: frame)
+      
+      if (isInitWithTargetAction && i >= lastParamIndex - 2) {
+        output += paramName + ": nil";
+      }
+      else {
+        if ((paramLabel != "_" || isInit) && !isGeneratedParamName) {
+          // TODO: use more generic logic for multiple same-named params
+          if (usedParams[paramName] > 0
+               && method->name == "constraintWithItem:attribute:relatedBy:toItem:attribute:multiplier:constant:") {
+            output += paramLabel + ": ";
+          }
+          else if (paramName == "memoryCapacity" && method->name == "initWithMemoryCapacity:diskCapacity:directoryURL:") {
+            // umm, ok
+            output += "__memoryCapacity: ";
+          }
+          else if (paramName == "fireDate" && method->name == "initWithFireDate:interval:target:selector:userInfo:repeats:") {
+            output += "fireAt: ";
+          }
+          else if (paramName == "fireDate" && method->name == "initWithFireDate:interval:repeats:block:") {
+            output += "fire: ";
+          }
+          else {
+            output += paramName + ": ";
+          }
+        }
+        
+        if (retTypeStr == "JSValue") {
+          string protoCall = getFunctionProtoCall(paramName, type.as<BlockType>().signature, qualType);
+          output += protoCall;
+        }
+        else {
+          output += sanitizeIdentifierForSwift(paramName);
+        }
+      }
+    }
+    else if (callType == Implementation) {
+      // initWithFrame(frame: CGRect)
+      if (paramLabel != paramName) {
+        output += paramLabel + " " + paramName;
+      }
+      else {
+        output += paramName;
+      }
+    }
+    else if (callType == Definition) {
+      // initWithFrame(_: CGRect)
+      output += sanitizeIdentifierForSwift(paramLabel);
+    }
+      
+    if (callType != Call) {
+      // Param type
+      output += ": ";
+      
+      if (retTypeStr == "[NSFontCollection.MatchingOptionKey: NSNumber]") {
+        retTypeStr = "[NSFontCollectionMatchingOptionKey: NSNumber]";
+      }
+      
       output += retTypeStr;
+      
       if (nonNullable.find(retTypeStr) == nonNullable.end()) {
         output += getTypeNullability(&parmVar, method);
       }
     }
     
-    if (i < lastParamIndex - 1) {
+    if (isInitWithTargetAction && callType != Call) {
+      if (i < lastParamIndex - 3) {
+        output += ", ";
+      }
+    }
+    else if (i < lastParamIndex - 1) {
       output += ", ";
     }
   }

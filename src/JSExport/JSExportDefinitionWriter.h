@@ -44,7 +44,9 @@ public:
   virtual void visit(::Meta::EnumConstantMeta* meta) override;
 
   static std::unordered_set<std::string> hiddenClasses;
-  
+  static std::string outputJSEFolder;
+  static std::string outputVueFolder;
+
   std::pair<clang::Module*, std::vector<::Meta::Meta*> >& _module;
   ::Meta::TypeFactory& _typeFactory;
   DocSetManager _docSet;
@@ -55,7 +57,13 @@ private:
   
   static std::string writeProperty(::Meta::PropertyMeta* meta, ::Meta::BaseClassMeta* owner);
   void writeProperty(::Meta::PropertyMeta* meta, ::Meta::BaseClassMeta* owner, ::Meta::InterfaceMeta* target, CompoundMemberMap<::Meta::PropertyMeta> compoundProperties);
-  
+  void writeClass(::Meta::InterfaceMeta* meta, CompoundMemberMap<::Meta::MethodMeta>* staticMethods, CompoundMemberMap<::Meta::MethodMeta>* instanceMethods);
+  void writeProto(std::string protocolName, ::Meta::InterfaceMeta* meta);
+  void writeProto(::Meta::ProtocolMeta* meta);
+  void writeCreate(::Meta::MethodMeta* method, ::Meta::BaseClassMeta* owner, bool isStatic = false);
+
+  void writeExtension(std::string protocolName, ::Meta::InterfaceMeta* meta, CompoundMemberMap<::Meta::MethodMeta>* staticMethods, CompoundMemberMap<::Meta::MethodMeta>* instanceMethods);
+
   static void getInheritedMembersRecursive(::Meta::InterfaceMeta* interface,
                                            CompoundMemberMap<::Meta::MethodMeta>* staticMethods,
                                            CompoundMemberMap<::Meta::MethodMeta>* instanceMethods,

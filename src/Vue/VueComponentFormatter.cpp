@@ -1,6 +1,5 @@
 #include "TypeScript/DefinitionWriter.h"
 #include "VueComponentDefinitionWriter.h"
-#include "JSExport/JSExportMeta.h"
 #include "JSExport/JSExportFormatter.h"
 #include "Meta/Utils.h"
 #include "Meta/MetaData.h"

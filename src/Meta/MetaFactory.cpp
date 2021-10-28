@@ -3,7 +3,6 @@
 #include "MetaData.h"
 #include "CreationException.h"
 #include "JSExport/JSExportDefinitionWriter.h"
-#include "JSExport/JSExportMeta.h"
 #include "JSExport/JSExportFormatter.h"
 #include "Utils.h"
 #include "Utils/StringUtils.h"
@@ -425,26 +424,71 @@ void MetaFactory::createFromMethod(const clang::ObjCMethodDecl& method, MethodMe
   methodMeta.setFlags(MetaFlags::MethodIsInitializer, isInitializer); // set MethodIsInitializer flag
   if (isInitializer) {
     assert(methodMeta.getSelector().find("init", 0) == 0);
+    
+    // For JSExport bridging, we s/init/create since it does not support 'init' keyword
+    regex re("^init");
+    methodMeta.jsName = regex_replace(methodMeta.jsName, re, "create");
+
     string initPrefix = methodMeta.getSelector().find("initWith", 0) == 0 ? "initWith" : "init";
     string selector = methodMeta.getSelector().substr(initPrefix.length(), string::npos);
     
     if (selector.length() > 0) {
-      // split selector in tokens
       vector<string> ctorTokens;
       StringUtils::split(selector, ':', back_inserter(ctorTokens));
+      
       // make the first letter of all tokens a lowercase letter
-      for (string& token : ctorTokens) {
-        // this will not lowercase the first letter of tokens like 'URL', 'OAuth' etc
-        if (token.length() > 1 && isupper(token[1])) {
-          continue;
+      for (vector<string>::size_type i = 0; i < ctorTokens.size(); i++) {
+        string& token = ctorTokens[i];
+        
+        // ytho
+        if (token == "ContentsOfURL") {
+          token = "contentsOf";
         }
-        token[0] = tolower(token[0]);
+
+        for (vector<string>::size_type j = 0; j < token.size(); j++) {
+          if (j == 0 || j == token.size() - 1) {
+            token[j] = tolower(token[j]);
+          }
+          else if (j < token.size() - 1) {
+            if (isupper(token[j+1])) {
+              // next character is uppercase
+              token[j] = tolower(token[j]);
+            }
+          }
+        }
+        
+        if (token.size() >= 4 && token.substr(token.size() - 3, 3) == "url") {
+          // *url -> *URL
+          regex re("(\\w+)url$");
+          token = regex_replace(token, re, "$1URL");
+        }
+        else if (token.size() >= 3 && token.substr(token.size() - 2, 2) == "id") {
+          // *id -> *ID
+          regex re("(\\w+)id$");
+          token = regex_replace(token, re, "$1ID");
+        }
+        else if (token.size() >= 10 && token.substr(token.size() - 9, 9) == "WithTests") {
+          // *WithTests -> *With
+          regex re("(\\w+)WithTests$");
+          token = regex_replace(token, re, "$1With");
+        }
+        else if (token.size() >= 9 && token.substr(token.size() - 8, 8) == "WithTest") {
+          // *WithTest -> *With
+          regex re("(\\w+)WithTest$");
+          token = regex_replace(token, re, "$1With");
+        }
+
+        if (token.size() >= 5 && token.substr(0, 4) == "objc") {
+          // objc* -> objC*
+          token[3] = toupper(token[3]);
+        }
       }
       
       // if the last parameter is NSError**, remove the last selector token
       if (methodMeta.getFlags(MetaFlags::MethodHasErrorOutParameter)) {
         ctorTokens.pop_back();
       }
+      
       if (ctorTokens.size() > 0) {
         // rename duplicated tokens by adding digit at the end of the token
         for (vector<string>::size_type i = 0; i < ctorTokens.size(); i++) {
@@ -461,7 +505,7 @@ void MetaFactory::createFromMethod(const clang::ObjCMethodDecl& method, MethodMe
         ostringstream joinedTokens;
         const char* delimiter = ":";
         copy(ctorTokens.begin(), ctorTokens.end(), ostream_iterator<string>(joinedTokens, delimiter));
-        methodMeta.constructorTokens = joinedTokens.str();
+        methodMeta.constructorTokens = ctorTokens;
       }
     }
   }
@@ -645,7 +689,7 @@ void MetaFactory::populateIdentificationFields(const clang::NamedDecl& decl, Met
   // check if renamed
   if (nameKey.size() && meta.name.size()) {
     string selector;
-    std::string renamedName = MetaData::renamedName(nameKey, categoryName);
+    string renamedName = MetaData::renamedName(nameKey, categoryName);
 
     if (renamedName != nameKey) {
       meta.isRenamed = true;
@@ -653,7 +697,7 @@ void MetaFactory::populateIdentificationFields(const clang::NamedDecl& decl, Met
     
     selector = renamedName;
 
-    std::vector<std::string> nameParts = selectorParts(selector);
+    vector<string> nameParts = selectorParts(selector);
     meta.jsName = nameParts[0];
     nameParts.erase(nameParts.begin());
     meta.argLabels = nameParts;
