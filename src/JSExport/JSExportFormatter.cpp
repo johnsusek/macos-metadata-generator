@@ -211,10 +211,7 @@ string JSExportFormatter::formatTypeId(const IdType& idType, const clang::QualTy
   if (typePtr) {
     string pointeeTypeName = typePtr->getPointeeType().getAsString();
     stripModifiersFromPointerType(pointeeTypeName);
-    if (ignorePointerType) {
-      return "Any";
-    }
-    if (pointeeTypeName == "NSArray") {
+    if (ignorePointerType || pointeeTypeName == "NSArray") {
       return "Any";
     }
     return nameForJSExport(pointeeTypeName);
@@ -224,6 +221,24 @@ string JSExportFormatter::formatTypeId(const IdType& idType, const clang::QualTy
     stripModifiersFromPointerType(pointerQualTypeName);
     return nameForJSExport(pointerQualTypeName);
   }
+}
+
+bool starts_with(const std::string value, const std::string prefix)
+{
+  using namespace std;
+  
+  if (value.length() < prefix.length()) {
+    return false;
+  }
+  
+  return std::mismatch(prefix.begin(), prefix.end(), value.begin()).first == prefix.end();
+}
+
+bool ends_with(const std::string value, const std::string suffix)
+{
+  if (suffix.size() > value.size()) return false;
+  
+  return std::equal(suffix.rbegin(), suffix.rend(), value.rbegin());
 }
 
 string JSExportFormatter::formatTypePointer(const PointerType& pointerType, const clang::QualType pointerQualType, const bool ignorePointerType) {
@@ -250,11 +265,6 @@ string JSExportFormatter::formatTypePointer(const PointerType& pointerType, cons
     return "UnsafeMutableRawPointer";
   }
   
-  regex autoreleasingRe("^\\w+<\\w+,id>$");
-  if (regex_match(name, autoreleasingRe)) {
-    out += "Autoreleasing";
-  }
-
   bool hasInnerPointer = pointerType.innerType->is(TypePointer);
   
   if (hasInnerPointer) {
@@ -277,6 +287,24 @@ string JSExportFormatter::formatTypePointer(const PointerType& pointerType, cons
       unsafeType += "UnsafePointer";
     }
     else {
+      regex autoreleasingRe("^\\w+<\\w+,id>$");
+      string nullableSuffix = " * _Nullable * _Nullable";
+      
+      if (regex_match(name, autoreleasingRe)) {
+        out += "Autoreleasing";
+      }
+      else if (ends_with(pointerQualTypeName, nullableSuffix)) {
+        if (starts_with(pointerQualTypeName, "NSArray")) {
+          out += "Autoreleasing";
+        }
+        else if (starts_with(pointerQualTypeName, "NSInputStream")) {
+          out += "Autoreleasing";
+        }
+        else if (starts_with(pointerQualTypeName, "NSOutputStream")) {
+          out += "Autoreleasing";
+        }
+      }
+      
       unsafeType += "UnsafeMutablePointer";
     }
 
@@ -285,11 +313,17 @@ string JSExportFormatter::formatTypePointer(const PointerType& pointerType, cons
   
   // Inside bridged generics, the rules for type names are different,
   // so we don't use nameForJSExport here
-  if (name == "BOOL") {
+  if (pointerType.innerType->is(TypeCString)) {
+    out += "UnsafeMutablePointer<UInt8>";
+  }
+  else if (name == "BOOL") {
     out += "ObjCBool";
   }
   else if (name == "float") {
     out += "Float";
+  }
+  else if (name == "Array") {
+    out += "NSArray";
   }
   else if (name == "String") {
     out += "NSString";
@@ -324,6 +358,7 @@ string JSExportFormatter::formatTypePointer(const PointerType& pointerType, cons
 string JSExportFormatter::formatType(const Type& type, const clang::QualType pointerType, const bool ignorePointerType)
 {
   string typeStr = "";
+  string pointerTypeStr = pointerType.getAsString();
   
   switch (type.getType()) {
     case TypeVoid:
@@ -353,14 +388,23 @@ string JSExportFormatter::formatType(const Type& type, const clang::QualType poi
       typeStr = nameForJSExport(MetaData::renamedName(pointerType.getAsString()));
       break;
     case TypeLong: {
-      typeStr = nameForJSExport(MetaData::renamedName(pointerType.getAsString()));
-//      typeStr = "Int";
+      if (pointerTypeStr == "NSInteger") {
+        typeStr = "Int";
+      }
+      else {
+        typeStr = nameForJSExport(MetaData::renamedName(pointerType.getAsString()));
+      }
       break;
     }
-    case TypeULong:
-//      typeStr = nameForJSExport(MetaData::renamedName(pointerType.getAsString()));
-      typeStr = "Int";
+    case TypeULong: {
+      if (pointerTypeStr == "NSUInteger * _Nonnull") {
+        typeStr = "UnsafeMutablePointer<Int>";
+      }
+      else {
+        typeStr = "Int";
+      }
       break;
+    }
     case TypeLongLong:
       typeStr = "Int64";
       break;
@@ -687,10 +731,22 @@ string JSExportFormatter::getFunctionProtoCall(string paramName, const vector<Ty
   
   string blockRetType = formatType(type, qualType, true);
   
+  bool isNullableBlockReturn = false;
+  
+  regex nullableBlockReturn(".* _Nullable.*");
+  if (regex_match(qualType.getAsString(), nullableBlockReturn)) {
+    isNullableBlockReturn = true;
+  }
+  
   output += "      ";
   
   if (blockRetType != "Void") {
-    output += "if let res = ";
+    if (isNullableBlockReturn) {
+      output += "if let res = ";
+    }
+    else {
+      output += "let res = ";
+    }
   }
   
   output += paramName + ".call(withArguments: [";
@@ -703,12 +759,22 @@ string JSExportFormatter::getFunctionProtoCall(string paramName, const vector<Ty
   }
 
   output += "])";
+  
+  if (!isNullableBlockReturn) {
+    output += "!";
+  }
 
   if (blockRetType != "Void") {
-    output += " { \n";
-    output += "        ";
+    if (isNullableBlockReturn) {
+      output += " { \n";
+      output += "        ";
+    }
+    else {
+      output += "\n      ";
+    }
     
     string interfaceName = "";
+    string asSymbol = isNullableBlockReturn ? "?" : "!";
     
     if (type.is(TypeType::TypeInterface)) {
       const InterfaceMeta& interface = *type.as<InterfaceType>().interface;
@@ -716,25 +782,35 @@ string JSExportFormatter::getFunctionProtoCall(string paramName, const vector<Ty
     }
     
     if (type.is(TypeType::TypeEnum)) {
-      output += "return " + blockRetType + ".init(rawValue: Int(res.toInt32()))!\n";
+      output += "return " + blockRetType + ".init(rawValue: Int(res.toInt32()))!";
     }
     else if (interfaceName == "Array") {
       output += "return res.toArray()";
-      output += " as! " + blockRetType + " \n";
+      output += " as" + asSymbol + " " + blockRetType;
     }
     else if (interfaceName == "Dictionary") {
-      output += "return res.toDictionary()\n";
-      output += " as! " + blockRetType + " \n";
+      output += "return res.toDictionary()";
+      output += " as" + asSymbol + " " + blockRetType;
     }
     else if (valueTypes.find(blockRetType) == valueTypes.end()) {
       output += "return res.toObjectOf(" + blockRetType + ".self)";
-      output += " as! " + blockRetType + " \n";
+      output += " as" + asSymbol + " " + blockRetType + " ";
     }
     else {
       output += "return res.to" + blockRetType + "()";
     }
     
-    output += "      }";
+    if (isNullableBlockReturn) {
+      output += "\n      }\n";
+      output += "      return nil";
+    }
+    else {
+//      if (valueTypes.find(blockRetType) == valueTypes.end()) {
+//        output += "!\n";
+//      }
+    }
+
+    cout << blockRetType << " - " << interfaceName << ": " << qualType.getAsString() << endl;
   }
 
   output += "\n";
@@ -812,7 +888,8 @@ string JSExportFormatter::getMethodParams(MethodMeta* method, BaseClassMeta* own
     }
     
     // Manual fixes for create fns whose renamed params
-    // don't seem to be in any attrs or api notes? 
+    // don't seem to be in any attrs or api notes?
+
     if (method->jsName == "createWithContainerClassDescription") {
       if (method->constructorTokens[i] == "startSpecifier") {
         paramName = "start";
@@ -826,17 +903,44 @@ string JSExportFormatter::getMethodParams(MethodMeta* method, BaseClassMeta* own
         paramName = "test";
       }
     }
-    
+    else if (method->jsName == "createWithDrawSelector") {
+      if (method->constructorTokens[i] == "drawSelector") {
+        paramName = "draw";
+      }
+    }
+    else if (method->jsName == "createForURL") {
+      if (method->constructorTokens[i] == "forURL") {
+        paramName = "for";
+      }
+      else if (method->constructorTokens[i] == "withContentsOfURL") {
+        paramName = "withContentsOf";
+      }
+    }
+    else if (owner->jsName == "URL" && method->isInit()) {
+      if (paramName == "relativeToURL") {
+        paramName = "relativeTo";
+      }
+      else if (paramName == "fileurlWithPath") {
+        paramName = "fileURLWithPath";
+      }
+      else if (paramName == "fileurlWithFileSystemRepresentation") {
+        paramName = "fileURLWithFileSystemRepresentation";
+      }
+      else if (paramName == "absoluteurlWithDataRepresentation") {
+        paramName = "absoluteURLWithDataRepresentation";
+      }
+    }
+
     if (!hasUnlabeled) {
       paramLabel = paramName;
     }
-
-    if (paramName == "_") {
+    
+    if (paramName == "_" || paramName.empty()) {
       paramName = "p" + std::to_string(i);
       isGeneratedParamName = true;
     }
         
-    if(usedParams[paramName] > 0) {
+    if (usedParams[paramName] > 0) {
       paramName += to_string(usedParams[paramName]);
     }
     
@@ -859,28 +963,34 @@ string JSExportFormatter::getMethodParams(MethodMeta* method, BaseClassMeta* own
     if (callType == Call) {
       // initWithFrame(frame: frame)
       
+      if (method->name == "URLWithString:relativeToURL:") {
+        cout << "";
+      }
+      
       if (isInitWithTargetAction && i >= lastParamIndex - 2) {
         output += paramName + ": nil";
       }
       else {
-        if ((paramLabel != "_" || isInit) && !isGeneratedParamName) {
-          // TODO: use more generic logic for multiple same-named params
-          if (usedParams[paramName] > 0
-               && method->name == "constraintWithItem:attribute:relatedBy:toItem:attribute:multiplier:constant:") {
-            output += paramLabel + ": ";
-          }
-          else if (paramName == "memoryCapacity" && method->name == "initWithMemoryCapacity:diskCapacity:directoryURL:") {
-            // umm, ok
-            output += "__memoryCapacity: ";
-          }
-          else if (paramName == "fireDate" && method->name == "initWithFireDate:interval:target:selector:userInfo:repeats:") {
-            output += "fireAt: ";
-          }
-          else if (paramName == "fireDate" && method->name == "initWithFireDate:interval:repeats:block:") {
-            output += "fire: ";
-          }
-          else {
-            output += paramName + ": ";
+        if (!isGeneratedParamName) {
+          if (paramLabel != "_" || method->getFlags(MethodIsInitializer)) {
+            // TODO: use more generic logic for multiple same-named params
+            if (usedParams[paramName] > 0
+                 && method->name == "constraintWithItem:attribute:relatedBy:toItem:attribute:multiplier:constant:") {
+              output += paramLabel + ": ";
+            }
+            else if (paramName == "memoryCapacity" && method->name == "initWithMemoryCapacity:diskCapacity:directoryURL:") {
+              // umm, ok
+              output += "__memoryCapacity: ";
+            }
+            else if (paramName == "fireDate" && method->name == "initWithFireDate:interval:target:selector:userInfo:repeats:") {
+              output += "fireAt: ";
+            }
+            else if (paramName == "fireDate" && method->name == "initWithFireDate:interval:repeats:block:") {
+              output += "fire: ";
+            }
+            else {
+              output += paramName + ": ";
+            }
           }
         }
         

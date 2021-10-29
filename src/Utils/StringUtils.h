@@ -27,16 +27,6 @@ size_t split(const std::basic_string<CharT>& input, CharT delim, OutputIterator 
   return count;
 };
 
-template <typename CharT>
-bool starts_with(const std::basic_string<CharT>& string, const std::basic_string<CharT>& prefix)
-{
-    if (string.length() < prefix.length()) {
-        return false;
-    }
-
-    return std::mismatch(prefix.begin(), prefix.end(), string.begin()).first == prefix.end();
-}
-
 template <typename Range, typename Value = typename Range::value_type>
 std::string join(Range const& elements, const char *const delimiter) {
   std::ostringstream os;

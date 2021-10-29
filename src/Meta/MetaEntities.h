@@ -187,7 +187,7 @@ public:
 
       return isInit;
     }
-  
+
     void setFlags(MetaFlags flags, bool value)
     {
         if (value) {
@@ -337,6 +337,45 @@ public:
     InterfaceMeta* base;
 
     virtual void visit(MetaVisitor* visitor) override;
+    
+    bool nameExistsInSuperclass(std::string name, MetaType metaType) {
+      bool stop = false;
+      bool isInSuperclass = false;
+      auto base = this->base;
+      
+      while (stop == false) {
+        if (base && base != NULL && base != nullptr) {
+          if (metaType == Method) {
+            for (MethodMeta* baseMethod : base->instanceMethods) {
+              if (name == baseMethod->jsName) {
+                isInSuperclass = true;
+                stop = true;
+                return true;
+              }
+            }
+          }
+          
+          if (metaType == Property) {
+            for (PropertyMeta* baseProperty : base->instanceProperties) {
+              if (name == baseProperty->jsName) {
+                isInSuperclass = true;
+                stop = true;
+                return true;
+              }
+            }
+          }
+          
+          if (!stop) {
+            base = base->base;
+          }
+        }
+        else {
+          stop = true;
+        }
+      }
+      
+      return isInSuperclass;
+    }
 };
 
 class RecordMeta : public Meta {
