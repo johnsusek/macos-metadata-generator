@@ -7,7 +7,6 @@
 #include "Meta/Filters/ModulesBlocklist.h"
 #include "Meta/Filters/RemoveDuplicateMembersFilter.h"
 #include "Meta/Filters/ResolveGlobalNamesCollisionsFilter.h"
-#include "Meta/MetaData.h"
 #include "TypeScript/DefinitionWriter.h"
 #include "TypeScript/DocSetManager.h"
 #include "Vue/VueComponentDefinitionWriter.h"
@@ -56,7 +55,7 @@ public:
     cout << "Loading API notes...";
     
     for (clang::Module* module : modules) {
-      Meta::MetaData::populateModule(module->getFullModuleName());
+      Meta::Type::populateModule(module->getFullModuleName());
     }
     
     cout << " done." << endl;
@@ -153,6 +152,11 @@ public:
 //      error_code error;
 //      llvm::raw_fd_ostream file(path.str(), error, llvm::sys::fs::F_Text);
 //
+//      if (error) {
+//        cout << error.message();
+//        return;
+//      }
+//
 //      cout << "Generating TypeScript definitions for MacOS..." << endl;
 //
 //      output << "/* eslint-disable */\n\n";
@@ -164,12 +168,6 @@ public:
 //
 //      for (pair<clang::Module*, vector<Meta::Meta*> >& modulePair : metasByModules) {
 //        TypeScript::DefinitionWriter definitionWriter(modulePair, _visitor.getMetaFactory().getTypeFactory(), docSetPath);
-//
-//        if (error) {
-//          cout << error.message();
-//          return;
-//        }
-//
 //        output << definitionWriter.write();
 //      }
 //

@@ -22,6 +22,21 @@
     }
 
 namespace Meta {
+
+std::string renamedName(std::string name, std::string ownerKey = "");
+std::string sanitizeIdentifierForSwift(const std::string& identifierName);
+std::string getFunctionProtoCall(std::string paramName, const std::vector<::Meta::Type*>& signature, const clang::QualType qualType);
+std::string getFunctionInterfaceCall(std::string paramName, const ::Meta::InterfaceType& interface, const clang::QualType qualType);
+std::string jsConversionFnName(std::string paramName, const ::Meta::Type& type, const clang::QualType qualType);
+
+static std::unordered_set<std::string> nonNullable;
+
+enum ParamCallType {
+  Definition = 0, // initWithFrame(_: CGRect)
+  Implementation, // initWithFrame(_ frame: CGRect)
+  Call // initWithFrame(frame)
+};
+
 struct Version {
     static Version Unknown;
     
@@ -197,6 +212,9 @@ public:
         }
     }
     
+    bool getUnavailableInSwift(Meta* owner);
+    std::string dumpDeclComments(Meta* owner);
+
     template <class T>
     const T& as() const
     {
@@ -275,15 +293,19 @@ public:
     {
         this->type = MetaType::Method;
     }
-
   // just a more convenient way to get the selector of method
   std::string getSelector() const
   {
     return this->name;
   }
-
+  
   // Get the replacement selector name from api notes and attrs
   std::string getReplacement();
+  std::string builtName();
+  std::string getParamsAsString(BaseClassMeta* owner, ParamCallType callType = ParamCallType::Definition);
+  std::string getTypeNullability(clang::ParmVarDecl* decl);
+  std::string getTypeNullability(BaseClassMeta* owner);
+  bool hasTargetAction();
 
   std::vector<Type*> signature;
   std::vector<std::string> constructorTokens;
@@ -301,6 +323,8 @@ public:
 
     MethodMeta* getter = nullptr;
     MethodMeta* setter = nullptr;
+
+    std::string getNullabilitySymbol(BaseClassMeta* owner);
 
     virtual void visit(MetaVisitor* visitor) override;
 };
@@ -353,10 +377,24 @@ public:
                 return true;
               }
             }
+            for (MethodMeta* baseMethod : base->staticMethods) {
+              if (name == baseMethod->jsName) {
+                isInSuperclass = true;
+                stop = true;
+                return true;
+              }
+            }
           }
           
           if (metaType == Property) {
             for (PropertyMeta* baseProperty : base->instanceProperties) {
+              if (name == baseProperty->jsName) {
+                isInSuperclass = true;
+                stop = true;
+                return true;
+              }
+            }
+            for (PropertyMeta* baseProperty : base->staticProperties) {
               if (name == baseProperty->jsName) {
                 isInSuperclass = true;
                 stop = true;

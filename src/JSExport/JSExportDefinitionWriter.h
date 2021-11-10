@@ -61,6 +61,7 @@ private:
   void writeProto(std::string protocolName, ::Meta::InterfaceMeta* meta);
   void writeProto(::Meta::ProtocolMeta* meta);
   void writeCreate(::Meta::MethodMeta* method, ::Meta::BaseClassMeta* owner, bool isStatic = false);
+  void writeMethodImpl(::Meta::MethodMeta* method, ::Meta::BaseClassMeta* owner, bool isStatic = false);
 
   void writeExtension(std::string protocolName, ::Meta::InterfaceMeta* meta, CompoundMemberMap<::Meta::MethodMeta>* staticMethods, CompoundMemberMap<::Meta::MethodMeta>* instanceMethods);
 

@@ -1,7 +1,6 @@
 #include "TypeScript/DefinitionWriter.h"
 #include "JSExportDefinitionWriter.h"
-#include "JSExportFormatter.h"
-#include "Meta/MetaData.h"
+#include "Meta/MetaEntities.h"
 #include "Meta/MetaFactory.h"
 #include "Meta/Utils.h"
 #include "Meta/NameRetrieverVisitor.h"
@@ -104,11 +103,15 @@ bool methodHasGenericParams(MethodMeta* method) {
   for (size_t i = 0; i < parameters.size(); i++) {
     const clang::ParmVarDecl parmVar = *parameters[i];
     vector<Type*> paramsGenerics;
-    
-    getClosedGenericsIfAnyJS(*method->signature[i+1], paramsGenerics);
+    auto& pType = *method->signature[i+1];
+    if (pType.is(TypeBlock)) {
+      return true;
+    }
+
+    getClosedGenericsIfAnyJS(pType, paramsGenerics);
     
     if (!paramsGenerics.empty()) {
-      hasGenericParams = true;
+      return true;
     }
   }
   
@@ -266,13 +269,13 @@ string JSExportDefinitionWriter::getMethodReturnType(MethodMeta* meta, BaseClass
   const clang::ObjCMethodDecl& methodDecl = *clang::dyn_cast<clang::ObjCMethodDecl>(meta->declaration);
 
   if (!methodDecl.isInstanceMethod() && owner->is(MetaType::Interface)) {
-    if ((retType->is(TypeInstancetype) || DefinitionWriter::hasClosedGenerics(*retType)) && !skipGenerics) {
+    if ((retType->is(TypeInstancetype) || retType->hasClosedGenerics()) && !skipGenerics) {
       output += getTypeParametersStringOrEmpty(clang::cast<clang::ObjCInterfaceDecl>(static_cast<const InterfaceMeta*>(owner)->declaration));
     } else if (!paramsGenerics.empty()) {
       output += "<";
       for (size_t i = 0; i < paramsGenerics.size(); i++) {
         auto name = paramsGenerics[i]->visit(NameRetrieverVisitor::instanceTs);
-        output += JSExportFormatter::current.nameForJSExport(name);
+        output += ::Meta::Type::nameForJSExport(name);
         if (i < paramsGenerics.size() - 1) {
           output += ", ";
         }
@@ -295,9 +298,11 @@ string JSExportDefinitionWriter::writeMethod(MethodMeta* method, BaseClassMeta* 
   }
   
   const clang::ObjCMethodDecl& methodDecl = *clang::dyn_cast<clang::ObjCMethodDecl>(method->declaration);
-  string retTypeString = JSExportFormatter::current.formatType(*method->signature[0], methodDecl.getReturnType());
+  auto& typeArg = *method->signature[0];
 
-  bool unavailableInSwift = MetaData::getUnavailableInSwift(method, owner);
+  string retTypeString = Type::formatType(typeArg, methodDecl.getReturnType());
+
+  bool unavailableInSwift = method->getUnavailableInSwift(owner);
 
   if (unavailableInSwift && !method->isRenamed) {
     output << "// unavailableInSwift ";
@@ -319,9 +324,16 @@ string JSExportDefinitionWriter::writeMethod(MethodMeta* method, BaseClassMeta* 
   
   output << "func ";
   
-  output << JSExportFormatter::current.sanitizeIdentifierForSwift(method->jsName);
-  
-  auto methodParams = JSExportFormatter::current.getMethodParams(method, owner);
+  string methodParams;
+
+  if (method->isInit() || method->getParamsAsString(owner).find("JSValue") != string::npos) {
+    output << ::Meta::sanitizeIdentifierForSwift(method->builtName());
+    methodParams = method->getParamsAsString(owner, ParamCallType::Implementation);
+  }
+  else {
+    output << ::Meta::sanitizeIdentifierForSwift(method->jsName);
+    methodParams = method->getParamsAsString(owner);
+  }
   
   // Don't have clang::Qualifiers::OCL_Autoreleasing?
   static unordered_set<string> autoreleasingMethods = {
@@ -339,19 +351,19 @@ string JSExportDefinitionWriter::writeMethod(MethodMeta* method, BaseClassMeta* 
 
   if (retTypeString != "Void" && retTypeString != "") {
     output << " -> " + retTypeString;
-    output << JSExportFormatter::current.getTypeNullability(method, owner);    
+    output << method->getTypeNullability(owner);
   }
   
   string out = output.str();
   
-  regex re1(".*JSValue.*");
-  bool returnsJSValue = regex_match(out, re1);
-
-  if (returnsJSValue || retTypeString == "JSValue") {
-    if (!method->isInit()) {
-      return "// jsvalue - " + out;
-    }
-  }
+//  regex re1(".*JSValue.*");
+//  bool returnsJSValue = regex_match(out, re1);
+//
+//  if (returnsJSValue || retTypeString == "JSValue") {
+//    if (!method->isInit()) {
+//      return "// jsvalue - " + out;
+//    }
+//  }
   if (method->getFlags(MetaFlags::MethodHasErrorOutParameter) && !method->isInit()) {
     return "// throws - " + out;
   }
@@ -370,11 +382,12 @@ string JSExportDefinitionWriter::writeMethod(CompoundMemberMap<MethodMeta>::valu
   
   BaseClassMeta* memberOwner = methodPair.second.first;
   
-  bool isOwnMethod = memberOwner == owner;
+//  bool isOwnMethod = memberOwner == owner;
   bool implementsProtocol = protocols.find(static_cast<ProtocolMeta*>(memberOwner)) != protocols.end();
   bool returnsInstanceType = method->signature[0]->is(TypeInstancetype);
+  bool isNSObject = memberOwner->name == "NSObject";
   
-  if (isOwnMethod || implementsProtocol || returnsInstanceType) {
+  if (!isNSObject || implementsProtocol || returnsInstanceType) {
     output = writeMethod(method, owner, keyword, metaJsName);
   }
   
@@ -454,7 +467,7 @@ void JSExportDefinitionWriter::writeExtension(string protocolName, InterfaceMeta
         string output = writeMethod(methodPair, meta, {}, "static", meta->jsName);
         
         if (output.size()) {
-          _buffer << MetaData::dumpDeclComments(method, meta) << endl;
+          _buffer << method->dumpDeclComments(meta) << endl;
           _buffer << _docSet.getCommentFor(method, owner).toString("");
           _buffer << "  " << output << endl;
         }
@@ -473,35 +486,53 @@ void JSExportDefinitionWriter::writeExtension(string protocolName, InterfaceMeta
 
     if (method->isInit()) {
       BaseClassMeta* owner = methodPair.second.first;
+      
+//      if (method->name == "baseUnit" && protocolName != "Dimension") {
+//        continue;
+//      }
+      
+      if (protocolName == "FileHandle") {
+        continue;
+      }
+      
+      if (protocolName == "AffineTransform") {
+        continue;
+      }
+      
       writeCreate(method, owner, true);
     }
   }
   
   for (auto& methodPair: *instanceMethods) {
     MethodMeta* method = methodPair.second.second;
+    BaseClassMeta* owner = methodPair.second.first;
 
     if (method->isInit()) {
-      BaseClassMeta* owner = methodPair.second.first;
-      writeCreate(method, owner);
+      if (protocolName == "NSWindow") {
+        writeCreate(method, owner);
+      }
+
+      // instance inits don't work atm?
+//      writeCreate(method, owner);
+    }
+    else if (methodHasGenericParams(method)) {
+      if (protocolName == "NSLayoutAnchor") {
+        cout << "Writing generic method " << method->name << endl;
+        writeMethodImpl(method, owner);
+        cout << "Wrote generic method " << method->name << endl;
+      }
     }
   }
 
   _buffer << "}\n";
 }
 
-void JSExportDefinitionWriter::writeCreate(MethodMeta* method, BaseClassMeta* owner, bool isStatic) {
-  if (method->constructorTokens.empty() && method->argLabels.empty()) {
-    // Empty creates are filtered out earlier, but a few classes
-    // have empty inits w/ a different name
-    if (method->name == "fieldEditor" || method->name == "baseUnit") {
-//      cout << "Skipping empty non-`init` constructor: " << method->name << endl;
-      return;
-    }
-  }
+void JSExportDefinitionWriter::writeMethodImpl(MethodMeta* method, BaseClassMeta* owner, bool isStatic) {
+  auto methodImplParams = method->getParamsAsString(owner, ParamCallType::Implementation);
+  auto methodCallParams = method->getParamsAsString(owner, ParamCallType::Call);
   
-  auto methodImplParams = JSExportFormatter::current.getMethodParams(method, owner, JSExportFormatter::ParamCallType::Implementation);
-  auto methodCallParams = JSExportFormatter::current.getMethodParams(method, owner, JSExportFormatter::ParamCallType::Call);
-  
+  _buffer << method->dumpDeclComments(owner) << endl;
+
   _buffer << "  @objc public ";
   
   if (owner->is(MetaType::Interface)) {
@@ -517,32 +548,101 @@ void JSExportDefinitionWriter::writeCreate(MethodMeta* method, BaseClassMeta* ow
     }
   }
   
-  _buffer << "static func " << method->jsName << methodImplParams;
-  
-  const clang::ObjCMethodDecl& methodDecl = *clang::dyn_cast<clang::ObjCMethodDecl>(method->declaration);
-  string retTypeString = JSExportFormatter::current.formatType(*method->signature[0], methodDecl.getReturnType());
+  if (isStatic) {
+    _buffer << "static ";
+  }
 
+  string implName = method->jsName;
+  
+  if (method->jsName == "constraint") {
+    implName = method->builtName();
+  }
+  
+  _buffer << "func " << implName << methodImplParams;
+
+  const clang::ObjCMethodDecl& methodDecl = *clang::dyn_cast<clang::ObjCMethodDecl>(method->declaration);
+  auto& first = *method->signature[0];
+  string retTypeString = Type::formatType(first, methodDecl.getReturnType());
+  
   _buffer << " -> " + retTypeString;
   
-  string typeNullabilityStr = JSExportFormatter::current.getTypeNullability(method, owner);
+  string typeNullabilityStr = method->getTypeNullability(owner);
   _buffer << typeNullabilityStr;
   
   _buffer << " {\n";
-
   _buffer << "    return ";
-
+  
   if (method->getFlags(MetaFlags::MethodHasErrorOutParameter)) {
     _buffer << "try? ";
   }
   
   _buffer << "self.";
+  
+  string callName = method->jsName;
+  
+  _buffer << callName;
+  _buffer << methodCallParams << endl;
+  
+  _buffer << "  }\n\n";
+}
 
+void JSExportDefinitionWriter::writeCreate(MethodMeta* method, BaseClassMeta* owner, bool isStatic) {
+  if (method->constructorTokens.empty() && method->argLabels.empty()) {
+    // Empty creates are filtered out earlier, but a few classes
+    // have empty inits w/ a different name
+    if (method->name == "fieldEditor") {
+      cerr << "Skipping empty non-`init` constructor: " << method->name << endl;
+      return;
+    }
+  }
+  
+  auto methodImplParams = method->getParamsAsString(owner, ParamCallType::Implementation);
+  auto methodCallParams = method->getParamsAsString(owner, ParamCallType::Call);
+
+  _buffer << method->dumpDeclComments(owner) << endl;
+
+  _buffer << "  @objc public ";
+
+  if (owner->is(MetaType::Interface)) {
+    auto interface = &owner->as<InterfaceMeta>();
+    auto base = interface->base;
+    if (base) {
+      for (MethodMeta* baseMethod : base->staticMethods) {
+        if (baseMethod->name == method->name) {
+          _buffer << "override ";
+          break;
+        }
+      }
+    }
+  }
+  
+  _buffer << "static func " << method->builtName() << methodImplParams;
+  
+  const clang::ObjCMethodDecl& methodDecl = *clang::dyn_cast<clang::ObjCMethodDecl>(method->declaration);
+  auto& first = *method->signature[0];
+  string retTypeString = Type::formatType(first, methodDecl.getReturnType());
+  
+  _buffer << " -> " + retTypeString;
+  
+  string typeNullabilityStr = method->getTypeNullability(owner);
+  _buffer << typeNullabilityStr;
+  
+  _buffer << " {\n";
+  
+  _buffer << "    return ";
+  
+  if (method->getFlags(MetaFlags::MethodHasErrorOutParameter)) {
+    _buffer << "try? ";
+  }
+  
+  _buffer << "self.";
+  
   string callName = method->jsName;
   
   if (callName.substr(0, 6) == "create") {
     callName = "init";
   }
-
+  
   _buffer << callName;
   
   _buffer << methodCallParams << endl;
@@ -616,11 +716,10 @@ string JSExportDefinitionWriter::writeProperty(PropertyMeta* meta, BaseClassMeta
   ostringstream output;
   
   string name = meta->jsName;
-  string originalName;
-  
+
   output << "var ";
   
-  output << JSExportFormatter::current.sanitizeIdentifierForSwift(name);
+  output << ::Meta::sanitizeIdentifierForSwift(name);
   
   bool ignorePointerType = false;
   
@@ -634,7 +733,7 @@ string JSExportDefinitionWriter::writeProperty(PropertyMeta* meta, BaseClassMeta
   
   auto decl = clang::dyn_cast<clang::ObjCPropertyDecl>(meta->declaration);
   auto& first = *meta->getter->signature[0];
-  string returnType = JSExportFormatter::current.formatType(first, decl->getType(), ignorePointerType);
+  string returnType = Type::formatType(first, decl->getType(), ignorePointerType);
 
   //
   // Manual fixes for property return types in the context of a JSExport
@@ -642,15 +741,8 @@ string JSExportDefinitionWriter::writeProperty(PropertyMeta* meta, BaseClassMeta
   
   // TODO: Better way to detect Any vs AnyObject
   if (returnType == "Any") {
-//    auto qualTypeStr = decl->getType().getAsString();
-
-    if (anyObjectProps.find(name) != anyObjectProps.end()
-        && owner->jsName != "NSDraggingItem") {
+    if (anyObjectProps.find(name) != anyObjectProps.end() && owner->jsName != "NSDraggingItem") {
       returnType = "AnyObject";
-//      cout << name << " - AnyObject: " << qualTypeStr << endl;
-    }
-    else {
-//      cout << name << " - Any: " << qualTypeStr << endl;
     }
   }
   else if (name == "floatValue") {
@@ -662,17 +754,13 @@ string JSExportDefinitionWriter::writeProperty(PropertyMeta* meta, BaseClassMeta
   else if (returnType == "NSLayoutAnchor") {
     returnType = "JSValue";
   }
-  
-  if (DefinitionWriter::hasClosedGenerics(first)) {
-    output << "";
-  }
 
   // Property return type
   output << ": " << returnType;
 
   bool isNullable = false;
   
-  if (JSExportFormatter::nonNullable.find(returnType) == JSExportFormatter::nonNullable.end()) {
+  if (::Meta::nonNullable.find(returnType) == ::Meta::nonNullable.end()) {
     isNullable = true;
   }
 
@@ -684,7 +772,7 @@ string JSExportDefinitionWriter::writeProperty(PropertyMeta* meta, BaseClassMeta
   }
   
   if (isNullable) {
-    output << JSExportFormatter::current.getNullabilitySymbol(meta, owner);
+    output << meta->getNullabilitySymbol(owner);
   }
   
   output << " {";
@@ -726,7 +814,7 @@ void JSExportDefinitionWriter::visit(ProtocolMeta* meta)
     if (output.size()) {
       regex re(".*JSValue.*");
       bool returnsJSValue = regex_match(output, re);
-      
+
       if (returnsJSValue) {
         _buffer << "// jsvalue ";
       }
@@ -743,6 +831,13 @@ void JSExportDefinitionWriter::visit(ProtocolMeta* meta)
     string output = writeMethod(method, meta);
     
     if (output.size()) {
+      regex re(".*JSValue.*");
+      bool returnsJSValue = regex_match(output, re);
+
+      if (returnsJSValue && meta->jsName != "NSLayoutAnchor") {
+        _buffer << "// jsvalue ";
+      }
+
       _buffer << "  " << output << endl;
     }
   }
@@ -759,6 +854,11 @@ void JSExportDefinitionWriter::visit(InterfaceMeta* meta)
     return;
   }
   
+  if (meta->jsName == "AffineTransform") {
+    // Unavailable classes
+    return;
+  }
+
   CompoundMemberMap<MethodMeta> compoundStaticMethods;
   static map<string, bool> addedConstructors = {};
 
@@ -776,26 +876,25 @@ void JSExportDefinitionWriter::visit(InterfaceMeta* meta)
       continue;
     }
     
-    if (method->jsName == "create") {
+    if (meta->jsName == "FileHandle") {
+      if (method->getFlags(MethodReturnsSelf)) {
+        continue;
+      }
+    }
+    
+    if (method->isInit()) {
       // Skip empty constructors since bridged NSObject includes this
-      if (method->argLabels.empty() || (method->argLabels.size() == 2 && method->argLabels[0] == "target" && method->argLabels[1] == "action")) {
+      if (method->argLabels.empty() || (method->argLabels.size() == 2 && method->hasTargetAction())) {
         continue;
       }
       
-      // Add constructor name to list so we don't write dupes later
-      string compareName = method->jsName + "With";
+      string builtName = method->builtName();
       
-      for (size_t i = 0; i < method->argLabels.size(); i++) {
-        auto argLabel = method->argLabels[i];
-        argLabel[0] = toupper(argLabel[0]);
-        compareName += argLabel;
-      }
-      
-      if (addedConstructors[compareName]) {
+      if (addedConstructors[builtName]) {
         continue;
       }
       
-      addedConstructors[compareName] = true;
+      addedConstructors[builtName] = true;
     }
     
     compoundStaticMethods.emplace(method->name, make_pair(meta, method));
@@ -822,7 +921,8 @@ void JSExportDefinitionWriter::visit(InterfaceMeta* meta)
     if (addedConstructors[method->jsName]) {
       continue;
     }
-    else if (!method->argLabels.empty()) {
+    
+    if (!method->argLabels.empty()) {
       // Normalize
       // initWithBytes:objCType:
       // vs
@@ -849,6 +949,14 @@ void JSExportDefinitionWriter::visit(InterfaceMeta* meta)
       continue;
     }
     
+    // skip instance inits
+    if (method->isInit()) {
+      if (meta->jsName != "NSWindow") {
+        cout << "Skipping instance init " << method->name << endl;
+        continue;
+      }
+    }
+    
     compoundInstanceMethods.emplace(method->name, make_pair(meta, method));
   }
   
@@ -857,7 +965,7 @@ void JSExportDefinitionWriter::visit(InterfaceMeta* meta)
   
   for (PropertyMeta* property : meta->instanceProperties) {
     if (ownInstanceProperties.find(property->name) != ownInstanceProperties.end()) {
-      cout << "Skipping property with duplicated name: `" << property->name << "`" << endl;
+      cerr << "Skipping property with duplicated name: `" << property->name << "`" << endl;
       continue;
     }
     
@@ -865,7 +973,7 @@ void JSExportDefinitionWriter::visit(InterfaceMeta* meta)
 
     if (isSubclassOf("NSControl", interface) &&
         interface->nameExistsInSuperclass(property->jsName, Method)) {
-      cout << "Skipping property that exists as method in " << interface->jsName << " superclass: `" << property->jsName << "`" << endl;
+      cerr << "Skipping property that exists as method in " << interface->jsName << " superclass: `" << property->jsName << "`" << endl;
       continue;
     }
     
@@ -878,7 +986,7 @@ void JSExportDefinitionWriter::visit(InterfaceMeta* meta)
 
     auto decl = clang::dyn_cast<clang::ObjCPropertyDecl>(property->declaration);
     auto& first = *property->getter->signature[0];
-    string returnType = JSExportFormatter::current.formatType(first, decl->getType());
+    string returnType = Type::formatType(first, decl->getType());
     
     if (returnType == "NSInvocation") {
       // NSInvocation is totally unsupported in Swift
@@ -899,8 +1007,55 @@ void JSExportDefinitionWriter::visit(InterfaceMeta* meta)
   
   unordered_set<ProtocolMeta*> inheritedProtocols;
   CompoundMemberMap<MethodMeta> inheritedStaticMethods;
-  
-  getInheritedMembersRecursive(meta, &inheritedStaticMethods, nullptr, nullptr, nullptr);
+  CompoundMemberMap<MethodMeta> inheritedInstanceMethods;
+  CompoundMemberMap<PropertyMeta> inheritedStaticProperties;
+  CompoundMemberMap<PropertyMeta> inheritedInstanceProperties;
+
+  getInheritedMembersRecursive(meta, &inheritedStaticMethods, &inheritedInstanceMethods, &inheritedStaticProperties, &inheritedInstanceProperties);
+//
+//  for (auto& propertyPair : inheritedInstanceProperties) {
+//    PropertyMeta* property = propertyPair.second.second;
+//
+//    if (ownInstanceProperties.find(property->name) != ownInstanceProperties.end()) {
+//      continue;
+//    }
+//
+//    ownInstanceProperties.emplace(propertyPair);
+//  }
+//
+//  for (auto& propertyPair : inheritedStaticProperties) {
+//    PropertyMeta* property = propertyPair.second.second;
+//
+//    if (ownStaticProperties.find(property->name) != ownStaticProperties.end()) {
+//      continue;
+//    }
+//
+//    ownStaticProperties.emplace(propertyPair);
+//  }
+//
+//  if (meta->jsName == "NSLayoutYAxisAnchor") {
+//    cout << "";
+//  }
+//
+//  for (auto& methodPair : inheritedInstanceMethods) {
+//    MethodMeta* method = methodPair.second.second;
+//
+//    if (compoundInstanceMethods.find(method->name) != compoundInstanceMethods.end()) {
+//      continue;
+//    }
+//
+//    if (method->isInit()) {
+//      //      cerr << "Skipping inherited create " << method->name << " in " << meta->jsName << " from " << meta->base->jsName << endl;
+//      continue;
+//    }
+//
+//    if (meta->jsName == "NSLayoutYAxisAnchor") {
+//      cout << "Emplacing " << method->name << endl;
+//    }
+//
+//
+//    compoundInstanceMethods.emplace(methodPair);
+//  }
   
   for (auto& methodPair : inheritedStaticMethods) {
     MethodMeta* method = methodPair.second.second;
@@ -935,7 +1090,7 @@ void JSExportDefinitionWriter::visit(InterfaceMeta* meta)
       auto proto = *meta->protocols[i];
       
       if (proto.jsName == metaName) {
-        cout << "Skipping proto with same name as interface: " << proto.jsName << endl;
+//        cerr << "Skipping proto with same name as interface: " << proto.jsName << endl;
         continue;
       }
       
@@ -944,7 +1099,7 @@ void JSExportDefinitionWriter::visit(InterfaceMeta* meta)
         continue;
       }
       
-      cout << meta->jsName << " proto.jsName: " << proto.jsName << endl;
+//      cout << meta->jsName << " proto.jsName: " << proto.jsName << endl;
 
       // fill out our collections of methods/properties from protocol
       getProtocolMembersRecursive(meta->protocols[i],
@@ -965,13 +1120,13 @@ void JSExportDefinitionWriter::visit(InterfaceMeta* meta)
 
   _buffer << "\n// Interface \n";
   
-  _buffer << MetaData::dumpDeclComments(meta, meta) << endl << endl;
+  _buffer << meta->dumpDeclComments(meta) << endl << endl;
   _buffer << _docSet.getCommentFor(meta).toString("");
   
   string protocolName = meta->jsName;
   
   // Fix "extension of protocol 'Error' cannot have an inheritance clause"
-  if (meta->jsName == "Error" || meta->jsName == "URL" || meta->jsName == "AffineTransform") {
+  if (meta->jsName == "Error" || meta->jsName == "URL") {
     protocolName = meta->name;
   }
   
@@ -992,15 +1147,23 @@ void JSExportDefinitionWriter::visit(InterfaceMeta* meta)
       // Don't write static method w/ same name as instance property
       // Fixes e.g. isSeparatorItem in NSMenuItem
       if (ownInstanceProperties.find(method->name) != ownInstanceProperties.end()) {
-        cout << "Skipping method `" << methodPair.first << "` in " << protocolName << " because instance property with same name exists" << endl;
+//        cerr << "Skipping method `" << methodPair.first << "` in " << protocolName << " because instance property with same name exists" << endl;
         continue;
       }
       
       string output = writeMethod(methodPair, meta, immediateProtocols, "static", metaName);
       
       if (output.size()) {
-        _buffer << MetaData::dumpDeclComments(method, meta) << endl;
+        _buffer << method->dumpDeclComments(meta) << endl;
         _buffer << _docSet.getCommentFor(method, owner).toString("");
+
+        regex re(".*JSValue.*");
+        bool returnsJSValue = regex_match(output, re);
+        
+        if (returnsJSValue && meta->jsName != "NSLayoutAnchor") {
+          _buffer << "// jsvalue ";
+        }
+
         _buffer << "  " << output << endl;
       }
     }
@@ -1033,7 +1196,7 @@ void JSExportDefinitionWriter::visit(InterfaceMeta* meta)
         continue;
       }
       
-      _buffer << MetaData::dumpDeclComments(propertyMeta, meta) << endl;
+      _buffer << propertyMeta->dumpDeclComments(meta) << endl;
       
       if (propertyMeta->unavailable) {
         _buffer << "  // ";
@@ -1050,16 +1213,28 @@ void JSExportDefinitionWriter::visit(InterfaceMeta* meta)
       MethodMeta* method = methodPair.second.second;
       
       if (ownInstanceProperties.find(methodPair.first) != ownInstanceProperties.end()) {
-        cout << "Skipping method `" << method->jsName << "` because property with same name exists " << endl;
+        cerr << "Skipping method `" << method->jsName << "` because property with same name exists " << endl;
         continue;
       }
       
       string output = writeMethod(methodPair, meta, immediateProtocols, method->isInit() ? "static" : "", metaName);
       
       if (output.size()) {
-        _buffer << MetaData::dumpDeclComments(method, meta) << endl;
+        _buffer << method->dumpDeclComments(meta) << endl;
         _buffer << "  ";
         _buffer << _docSet.getCommentFor(methodPair.second.second, methodPair.second.first).toString("  ");
+
+        regex re(".*JSValue.*");
+        bool returnsJSValue = regex_match(output, re);
+        
+        if (returnsJSValue && meta->jsName != "NSLayoutAnchor") {
+          _buffer << "// jsvalue ";
+        }
+        
+//        if (method->isInit()) {
+//          _buffer << "// instanceinit ";
+//        }
+        
         _buffer << output << endl;
       }
     }
@@ -1074,7 +1249,7 @@ void JSExportDefinitionWriter::visit(InterfaceMeta* meta)
       
       bool isDuplicated = ownInstanceProperties.find(propertyMeta->jsName) != ownInstanceProperties.end();
       if (immediateProtocols.find(reinterpret_cast<ProtocolMeta*>(owner)) != immediateProtocols.end() && !isDuplicated) {
-        _buffer << MetaData::dumpDeclComments(propertyMeta, meta) << endl;
+        _buffer << propertyMeta->dumpDeclComments(meta) << endl;
         
         if (propertyMeta->unavailable) {
           _buffer << "// ";
@@ -1096,7 +1271,7 @@ void JSExportDefinitionWriter::visit(InterfaceMeta* meta)
         continue;
       }
       
-      _buffer << MetaData::dumpDeclComments(propertyMeta, meta) << endl;
+      _buffer << propertyMeta->dumpDeclComments(meta) << endl;
       
       if (propertyMeta->unavailable) {
         _buffer << "// unavailable ";
@@ -1160,12 +1335,10 @@ string JSExportDefinitionWriter::write()
     if ((meta->is(MetaType::Interface) || meta->is(MetaType::Protocol)) && isNotHidden) {
       string filename = meta->jsName + ".swift";
       
-      if (meta->is(MetaType::Interface) && isSubclassOf("NSView", &meta->as<InterfaceMeta>())) {
-        regex frameworkPrefixes("^NS");
-        string noprefixName = regex_replace(meta->jsName, frameworkPrefixes, "");
-        filename = noprefixName + ".swift";
+      if (meta->jsName == "Error" || meta->jsName == "URL") {
+        filename = meta->name + ".swift";
       }
-      
+
       writeJSExport(filename, meta, _module.first->Name);
     }
 
@@ -1206,12 +1379,28 @@ void JSExportDefinitionWriter::writeJSExport(string filename, ::Meta::Meta* meta
     return;
   }
 
-  jsFile << "import AppKit\nimport JavaScriptCore\n";
+  jsFile << "import AppKit\n";
+  jsFile << "import JavaScriptCore\n";
+
+  /*
+   - TODO: Ship an `objc-metadata-generator` binary with the framework,
+     so that users can generate files for the frameworks they need.
+   
+     This is because whether or not we include e.g. CoreSpotlight can effect whether
+     or not something in another framework like Foundation gets generated
+   
+     (e.g. `var contentAttributeSet: CSSearchableItemAttributeSet` in NSUserActivity)
+   
+     So even if the user doesn't want CoreSpotlight, Foundation will have this field,
+     which means ultimately users will want to generate their own bridge files
+  */
   
-  // TODO: dynamically add these based on user's framework prefs in their xcodegen file
-  // this is just a really lazy way to get the JSEs to all compile, at the expense of memory usage
-  jsFile << "import Quartz\nimport AVKit\nimport CoreImage\nimport CoreGraphics\n";
-  
+  jsFile << "import Quartz\n";
+  jsFile << "import AVKit\n";
+  jsFile << "import CoreMedia\n";
+  jsFile << "import CoreSpotlight\n";
+  jsFile << "import CoreImage\n";
+  jsFile << "import CoreGraphics\n";
   jsFile << "import " << frameworkName << "\n";
   
   jsFile << buffer;

@@ -2,6 +2,10 @@
 
 #include "TypeVisitor.h"
 #include "Utils/Noncopyable.h"
+#include "yaml-cpp/yaml.h"
+#include <clang/Basic/Module.h>
+#include <clang/AST/DeclBase.h>
+#include <clang/AST/DeclObjC.h>
 #include <string>
 #include <vector>
 
@@ -64,7 +68,23 @@ public:
     {
         return type;
     }
-
+  
+    bool hasClosedGenerics() const;
+    static std::string bitwiseView(std::string& name);
+    static std::map<std::string, std::string> apiNotes;
+    static std::map<std::string, YAML::Node> attributesLookup;
+    static std::string nameForJSExport(const std::string& jsName) ;
+    static std::string lookupApiNotes(std::string type);
+    static std::string formatType(const Type& type, const clang::QualType pointerType, const bool ignorePointerType = false);
+    static std::string formatTypeId(const ::Meta::IdType& idType, const clang::QualType pointerType, const bool ignorePointerType = false);
+    static std::string formatTypePointer(const ::Meta::PointerType& pointerType, const clang::QualType pointerQualType, const bool ignorePointerType = false);
+    static std::string formatTypeInterface(const ::Meta::Type& type, const clang::QualType pointerType, const bool ignorePointerType = false);
+    static std::string formatTypeAnonymous(const ::Meta::Type& type, const clang::QualType pointerType);
+    static void stripModifiersFromPointerType(std::string& name);
+    static void findAndReplaceIn(std::string& str, std::string searchFor, std::string replaceBy);
+    static bool populateModule(std::string moduleName);
+    static bool populateModuleAttrs(std::string moduleName);
+    
     template <class T>
     const T& as() const
     {

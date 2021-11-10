@@ -1,9 +1,7 @@
 #include "MetaFactory.h"
 #include "MetaEntities.h"
-#include "MetaData.h"
 #include "CreationException.h"
 #include "JSExport/JSExportDefinitionWriter.h"
-#include "JSExport/JSExportFormatter.h"
 #include "Utils.h"
 #include "Utils/StringUtils.h"
 #include "ValidateMetaTypeVisitor.h"
@@ -352,6 +350,17 @@ void MetaFactory::createFromEnum(const clang::EnumDecl& enumeration, EnumMeta& e
     }
     enumMeta.fullNameFields.push_back({ enumField->getNameAsString(), valueStr });
   }
+  
+  // Lowercase enum values to match swift
+  //
+  // BackingStoreType.Retained -> BackingStoreType.retained
+  // StyleMask.HUDWindow -> StyleMask.HUDWindow
+  //
+//  for (auto nameField : enumMeta.swiftNameFields) {
+//    if (nameField.name.size() > 1 && islower(nameField.name[1])) {
+//      nameField.name[0] = tolower(nameField.name[0]);
+//    }
+//  }
 }
 
 void MetaFactory::createFromEnumConstant(const clang::EnumConstantDecl& enumConstant, EnumConstantMeta& enumConstantMeta)
@@ -646,7 +655,7 @@ void MetaFactory::populateIdentificationFields(const clang::NamedDecl& decl, Met
   }
   
   string nameKey;
-
+  
   // calculate js name
   switch (decl.getKind()) {
     case clang::Decl::Kind::ObjCInterface:
@@ -685,17 +694,17 @@ void MetaFactory::populateIdentificationFields(const clang::NamedDecl& decl, Met
     default:
       throw logic_error(string("Can't generate jsName for ") + decl.getDeclKindName() + " type of declaration.");
   }
-  
+
   // check if renamed
   if (nameKey.size() && meta.name.size()) {
     string selector;
-    string renamedName = MetaData::renamedName(nameKey, categoryName);
+    string renamed = renamedName(nameKey, categoryName);
 
-    if (renamedName != nameKey) {
+    if (renamed != nameKey) {
       meta.isRenamed = true;
     }
     
-    selector = renamedName;
+    selector = renamed;
 
     vector<string> nameParts = selectorParts(selector);
     meta.jsName = nameParts[0];
@@ -703,7 +712,7 @@ void MetaFactory::populateIdentificationFields(const clang::NamedDecl& decl, Met
     meta.argLabels = nameParts;
   }
   
-  // We allow  anonymous categories to be created. There is no need for categories to be named
+  // We allow anonymous categories to be created. There is no need for categories to be named
   // because we don't keep them as separate entity in metadata. They are merged in their interfaces
   if (!meta.is(MetaType::Category)) {
     if (meta.fileName == "") {
@@ -766,7 +775,7 @@ void MetaFactory::populateBaseClassMetaFields(const clang::ObjCContainerDecl& de
     categoryName = decl.getNameAsString();
   }
   
-  categoryName = MetaData::renamedName(categoryName);
+  categoryName = renamedName(categoryName);
   
   for (clang::ObjCProtocolDecl* protocol : this->getProtocols(&decl)) {
     Meta* protocolMeta;

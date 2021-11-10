@@ -9,6 +9,31 @@
 #include <string>
 
 namespace StringUtils {
+static inline void rtrim(std::string &s) {
+  s.erase(std::find_if(s.rbegin(), s.rend(), [](unsigned char ch) {
+    return !std::isspace(ch);
+  }).base(), s.end());
+}
+
+
+static inline bool starts_with(const std::string value, const std::string prefix)
+{
+  using namespace std;
+  
+  if (value.length() < prefix.length()) {
+    return false;
+  }
+  
+  return std::mismatch(prefix.begin(), prefix.end(), value.begin()).first == prefix.end();
+}
+
+static inline bool ends_with(const std::string value, const std::string suffix)
+{
+  if (suffix.size() > value.size()) return false;
+  
+  return std::equal(suffix.rbegin(), suffix.rend(), value.rbegin());
+}
+
 template <class OutputIterator, typename CharT>
 size_t split(const std::basic_string<CharT>& input, CharT delim, OutputIterator output)
 {

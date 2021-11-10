@@ -24,8 +24,6 @@ public:
     static std::string writeExports();
 
     static bool applyManualChanges;
-
-    static bool hasClosedGenerics(const Meta::Type& type);
   
     virtual void visit(Meta::InterfaceMeta* meta) override;
 
@@ -54,7 +52,7 @@ private:
     using CompoundMemberMap = std::map<std::string, std::pair<Meta::BaseClassMeta*, Member*> >;
 
     std::string writeMembers(const std::vector<Meta::RecordField>& fields, std::vector<TSComment> fieldsComments);
-    void writeProperty(Meta::PropertyMeta* meta, Meta::BaseClassMeta* owner, Meta::InterfaceMeta* target, CompoundMemberMap<Meta::PropertyMeta> compoundProperties);
+    std::string writeProperty(Meta::PropertyMeta* meta, Meta::BaseClassMeta* owner, Meta::InterfaceMeta* target, CompoundMemberMap<Meta::PropertyMeta> compoundProperties);
 
     static void getInheritedMembersRecursive(Meta::InterfaceMeta* interface,
         CompoundMemberMap<Meta::MethodMeta>* staticMethods,
@@ -78,7 +76,6 @@ private:
     static std::string computeMethodReturnType(const Meta::Type* retType, const Meta::BaseClassMeta* owner, bool canUseThisType = false);
     std::string getTypeArgumentsStringOrEmpty(const clang::ObjCObjectType* objectType);
     static std::string formatType(const Meta::Type& type, const clang::QualType pointerType, const bool ignorePointerType = false);
-    static std::string getFunctionProto(const std::vector<Meta::Type*>& signature, const clang::QualType qualType);
     static std::string formatTypeAnonymous(const Meta::Type& type, const clang::QualType pointerType);
     static std::string formatTypeInterface(const Meta::Type& type, const clang::QualType pointerType);
     static std::string getTypeString(clang::ASTContext &Ctx, clang::Decl::ObjCDeclQualifier Quals, clang::QualType qualType, const Meta::Type& type, const bool isFuncParam);
@@ -86,7 +83,10 @@ private:
     static std::string formatTypeId(const Meta::IdType& idType, const clang::QualType pointerType, const bool ignorePointerType);
     static std::string formatTypePointer(const Meta::PointerType& pointerType, const clang::QualType pointerQualType, const bool ignorePointerType);
     static std::string getInstanceParamsStr(Meta::MethodMeta* method, Meta::BaseClassMeta* owner);
-    static void populateStructsMeta();
+    static std::string getMethodNameSuffix(Meta::MethodMeta* method, Meta::BaseClassMeta* owner);
+  
+//    static void populateStructsMeta();
+  
     static std::string jsifyTypeName(const std::string& jsName);
 
     std::pair<clang::Module*, std::vector<Meta::Meta*> >& _module;

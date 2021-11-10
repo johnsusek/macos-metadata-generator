@@ -127,59 +127,74 @@ bool Utils::areTypesEqual(const vector<Type*>& vector1, const vector<Type*>& vec
 
 static bool isalpha(const vector<string>& strings, size_t index)
 {
-    for (auto& str : strings) {
-        if (!std::isalpha(str[index])) {
-            return false;
-        }
+  for (auto& str : strings) {
+    if (!std::isalpha(str[index])) {
+      return false;
     }
-    return true;
-}
-
-static string createValidPrefix(const vector<string>& fieldNames, const string& prefix)
-{
-    if (!prefix.empty()) {
-        for (const string& field : fieldNames) {
-            if (isdigit(field[prefix.size()])) {
-                int newPrefixLength = prefix.size();
-                while (newPrefixLength > 0 && !isupper(field[newPrefixLength])) {
-                    newPrefixLength--;
-                }
-
-                string newPrefix = prefix.substr(0, newPrefixLength);
-                return createValidPrefix(fieldNames, newPrefix);
-            }
-        }
-
-        bool allMembersStartWithUnderscore = true;
-        for (const string& field : fieldNames) {
-            if (field[prefix.size()] != '_') {
-                allMembersStartWithUnderscore = false;
-                break;
-            }
-        }
-        if (allMembersStartWithUnderscore) {
-            return createValidPrefix(fieldNames, prefix + '_');
-        }
-    }
-
-    return prefix;
+  }
+  return true;
 }
 
 string Utils::calculateEnumFieldsPrefix(const string& enumName, const vector<string>& fields)
 {
-    for (size_t prefixLength = 0; prefixLength < enumName.size(); prefixLength++) {
-        char c = enumName[prefixLength];
-        for (size_t i = 0; i < fields.size(); i++) {
-            if (prefixLength >= fields[i].size() || fields[i][prefixLength] != c) {
-                while (prefixLength > 0 && (!isupper(fields[i][prefixLength]) || !isalpha(fields, prefixLength))) {
-                    prefixLength--;
-                }
-                return createValidPrefix(fields, fields[i].substr(0, prefixLength));
-            }
-        }
-    }
+  vector<string> nameParts;
+  StringUtils::split(enumName, '.', back_inserter(nameParts));
+  string name = nameParts[nameParts.size() - 1];
+  string firstFieldName = fields[0];
+  bool noMatch = false;
+  string prefix = "";
+  
+  if (fields.size() <= 1) {
+    return prefix;
+  }
+  
+  // loop through each letter of first enum
+  for (size_t idx = 0; idx < firstFieldName.size(); idx++) {
+    char firstChar = firstFieldName[idx];
 
-    return createValidPrefix(fields, enumName);
+    // then check each other namefield for same char
+    for (size_t i = 1; i < fields.size(); i++) {
+      if (idx >= fields[i].size()) {
+        noMatch = true;
+        break;
+      }
+      if (fields[i][idx] != firstChar) {
+        // break when letter isn't the same in all
+        noMatch = true;
+        break;
+      }
+    }
+    
+    if (noMatch) {
+      break;
+    }
+    else {
+      if (isalpha(fields, idx + 1)) {
+        prefix += firstChar;
+      }
+    }
+  }
+  
+  if (prefix == "NS" || prefix.size() >= 3) {
+    return prefix;
+  }
+  else {
+    return "";
+  }
+  
+//  for (size_t prefixLength = 0; prefixLength < enumName.size(); prefixLength++) {
+//      char c = enumName[prefixLength];
+//      for (size_t i = 0; i < fields.size(); i++) {
+//          if (prefixLength >= fields[i].size() || fields[i][prefixLength] != c) {
+//              while (prefixLength > 0 && (!isupper(fields[i][prefixLength]) || !isalpha(fields, prefixLength))) {
+//                  prefixLength--;
+//              }
+//              return createValidPrefix(fields, fields[i].substr(0, prefixLength));
+//          }
+//      }
+//  }
+//
+//  return createValidPrefix(fields, enumName);
 }
 
 void Utils::getAllLinkLibraries(clang::Module* module, vector<clang::Module::LinkLibrary>& result)

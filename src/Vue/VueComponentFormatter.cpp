@@ -1,8 +1,6 @@
 #include "TypeScript/DefinitionWriter.h"
 #include "VueComponentDefinitionWriter.h"
-#include "JSExport/JSExportFormatter.h"
 #include "Meta/Utils.h"
-#include "Meta/MetaData.h"
 #include "Meta/NameRetrieverVisitor.h"
 #include "Utils/StringUtils.h"
 #include <algorithm>
@@ -104,7 +102,7 @@ string VueComponentFormatter::formatTypeId(const IdType& idType, const clang::Qu
 }
 
 string VueComponentFormatter::formatTypePointer(const PointerType& pointerType, const clang::QualType pointerQualType, const bool ignorePointerType) {
-  return MetaData::lookupApiNotes(formatType(*pointerType.innerType, pointerQualType, true));
+  return Type::lookupApiNotes(formatType(*pointerType.innerType, pointerQualType, true));
 }
 
 string VueComponentFormatter::formatType(const Type& type, const clang::QualType pointerType, const bool ignorePointerType)
@@ -148,7 +146,7 @@ string VueComponentFormatter::formatType(const Type& type, const clang::QualType
         string str = pointeeType.getAsString();
         str.resize(str.size() - 1);
         str.replace(0, 6, "");
-        return "typeof " + MetaData::lookupApiNotes(str);
+        return "typeof " + Type::lookupApiNotes(str);
       }
       else if (pointeeType.getAsString() == "Class") {
         return "any";
@@ -188,7 +186,7 @@ string VueComponentFormatter::formatType(const Type& type, const clang::QualType
       break;
     case TypeConstantArray:
     case TypeExtVector:
-      typeStr = MetaData::lookupApiNotes(formatType(*type.as<ConstantArrayType>().innerType, pointerType));
+      typeStr = Type::lookupApiNotes(formatType(*type.as<ConstantArrayType>().innerType, pointerType));
       break;
     case TypeIncompleteArray:
       typeStr = formatType(*type.as<IncompleteArrayType>().innerType, pointerType);
@@ -213,7 +211,7 @@ string VueComponentFormatter::formatType(const Type& type, const clang::QualType
       break;
   }
   
-  return MetaData::lookupApiNotes(typeStr);
+  return Type::lookupApiNotes(typeStr);
 }
 
 string VueComponentFormatter::formatTypeAnonymous(const Type& type, const clang::QualType pointerType) {
@@ -232,7 +230,7 @@ string VueComponentFormatter::formatTypeAnonymous(const Type& type, const clang:
   return output;
 }
 
-void VueComponentFormatter::findAndReplaceIn(string& str, string searchFor, string replaceBy)
+void VueComponentFormatter::findAndReplaceIn2(string& str, string searchFor, string replaceBy)
 {
   size_t found = str.find(searchFor);
   while (found != string::npos) {
@@ -248,9 +246,9 @@ string VueComponentFormatter::formatTypeInterface(const Type& type, const clang:
   
   string pointerQualTypeStr = pointerQualType.getAsString();
   const InterfaceMeta& interface = type.is(TypeType::TypeInterface) ? *type.as<InterfaceType>().interface : *type.as<BridgedInterfaceType>().bridgedInterface;
-  string interfaceName = vuePropifyTypeName(MetaData::renamedName(interface.jsName));
+  string interfaceName = vuePropifyTypeName(renamedName(interface.jsName));
   
-  if (DefinitionWriter::hasClosedGenerics(type)) {
+  if (type.hasClosedGenerics()) {
     const InterfaceType& interfaceType = type.as<InterfaceType>();
     
     if (interfaceName == "NSArray" || interfaceName == "Array") {
@@ -280,7 +278,7 @@ string VueComponentFormatter::formatTypeInterface(const Type& type, const clang:
     }
     else {
       typeArgName = formatType(*interfaceType.typeArguments[0], pointerQualType);
-      JSExportFormatter::stripModifiersFromPointerType(typeArgName);
+      Type::stripModifiersFromPointerType(typeArgName);
     }
     
     string out = interfaceName + "<" + typeArgName + ">";
@@ -313,26 +311,26 @@ string VueComponentFormatter::formatTypeInterface(const Type& type, const clang:
     
     if (ojectArgs.size()) {
       string firstArg = ojectArgs[0].getAsString(); // `NSString *`
-      JSExportFormatter::stripModifiersFromPointerType(firstArg); // `NSString`
-      auto argName = vuePropifyTypeName(MetaData::renamedName(firstArg)); // `String`
+      Type::stripModifiersFromPointerType(firstArg); // `NSString`
+      auto argName = vuePropifyTypeName(renamedName(firstArg)); // `String`
       
       return argName;
     }
     else {
       string pointeeTypeName = typePtr->getPointeeType().getAsString();
       if (interfaceName == "NSObject") {
-        JSExportFormatter::stripModifiersFromPointerType(pointeeTypeName);
-        return vuePropifyTypeName(MetaData::renamedName(pointeeTypeName));
+        Type::stripModifiersFromPointerType(pointeeTypeName);
+        return vuePropifyTypeName(renamedName(pointeeTypeName));
       }
       else {
-        JSExportFormatter::stripModifiersFromPointerType(pointerQualTypeStr);
-        return vuePropifyTypeName(MetaData::renamedName(pointerQualTypeStr));
+        Type::stripModifiersFromPointerType(pointerQualTypeStr);
+        return vuePropifyTypeName(renamedName(pointerQualTypeStr));
       }
     }
   }
   else {
-    JSExportFormatter::stripModifiersFromPointerType(pointerQualTypeStr);
-    return vuePropifyTypeName(MetaData::renamedName(pointerQualTypeStr));
+    Type::stripModifiersFromPointerType(pointerQualTypeStr);
+    return vuePropifyTypeName(renamedName(pointerQualTypeStr));
   }
   
   throw logic_error(string("Misparsed interface definition '") + interfaceName + "'.");
@@ -465,15 +463,7 @@ string VueComponentFormatter::getInstanceParamsStr(MethodMeta* method, BaseClass
   size_t numLabels = argumentLabels.size();
   size_t numUnLabeledArgs = lastParamIndex - numLabels;
   bool isInit = method->getFlags(MethodIsInitializer);
-  
-  bool isInitWithTargetAction = false;
-  
-  // For constructors that have target/action params at the end, we always pass nil
-  if (isInit && numLabels >= 2) {
-    if (argumentLabels[numLabels - 2] == "target" && argumentLabels[numLabels - 1] == "action") {
-      isInitWithTargetAction = true;
-    }
-  }
+  bool isInitWithTargetAction = isInit && method->hasTargetAction();
   
   for (size_t i = 0; i < lastParamIndex; i++) {
     const clang::ParmVarDecl parmVar = *parameters[i];

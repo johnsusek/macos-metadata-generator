@@ -2,10 +2,8 @@
 #include "Meta/Utils.h"
 #include "Meta/NameRetrieverVisitor.h"
 #include "Meta/MetaFactory.h"
-#include "Meta/MetaData.h"
 #include "Utils/StringUtils.h"
 #include "JSExport/JSExportDefinitionWriter.h"
-#include "JSExport/JSExportFormatter.h"
 #include "Vue/VueComponentFormatter.h"
 #include "yaml-cpp/yaml.h"
 #include <algorithm>
@@ -16,8 +14,9 @@ namespace TypeScript {
 using namespace Meta;
 using namespace std;
 
-static map<string, vector<EnumMeta*>> namespaceEnums = {};
+static map<string, map<string, map<string, vector<EnumMeta*>>>> namespaceEnums = {};
 static map<string, vector<VarMeta*>> namespaceVars = {};
+static map<string, vector<string>> namespaceClasses = {};
 static map<string, bool> allNamespaces = {};
 static map<string, bool> allClasses = {};
 static map<string, bool> allInterfaces = {};
@@ -29,8 +28,18 @@ static unordered_set<string> hiddenMethods = {
   "autorelease",
   "allocWithZone",
   "zone",
+  "string",
   "countByEnumeratingWithStateObjectsCount",
   "create"
+};
+
+static unordered_set<string> ignoredNamespaces = {
+  "Array",
+  "Set",
+  "String",
+  "Date",
+  "Dictionary",
+  "Error"
 };
 
 static unordered_set<string> bannedIdentifiers = {
@@ -75,7 +84,6 @@ static unordered_set<string> bannedIdentifiers = {
 string DefinitionWriter::jsifyTypeName(const string& jsName)
 {
   static map<string, string> jsNames = {
-    { "dtdKind", "XMLDTDNode.DTDKind" },
     { "Decimal", "number" },
     { "CGFloat", "number" },
     { "Float", "number" },
@@ -111,26 +119,35 @@ string DefinitionWriter::jsifyTypeName(const string& jsName)
 bool DefinitionWriter::applyManualChanges = false;
 
 string dataRoot = getenv("DATAPATH");
-
-static map<string, map<string, YAML::Node>> structsMeta = {};
-
-void DefinitionWriter::populateStructsMeta()
-{
-  string structsLookupPath = dataRoot + "/structs.json";
-  
-  auto structsNode = YAML::LoadFile(structsLookupPath);
-  
-  for (YAML::const_iterator it = structsNode.begin(); it != structsNode.end(); ++it) {
-    for (YAML::const_iterator it2 = it->second.begin(); it2 != it->second.end(); ++it2) {
-      for (YAML::const_iterator it3 = it2->second.begin(); it3 != it2->second.end(); ++it3) {
-        // NSApplication.ActivationOptions = { values, type }
-        string moduleName = it2->first.as<string>();
-        string className = it3->first.as<string>();
-        structsMeta[MetaData::renamedName(moduleName)][MetaData::renamedName(moduleName + "." + className)] = it3->second;
-      }
-    }
-  }
-}
+//
+//void DefinitionWriter::populateStructsMeta()
+//{
+//  string structsLookupPath = dataRoot + "/structs.json";
+//
+//  auto structsNode = YAML::LoadFile(structsLookupPath);
+//
+//  for (YAML::const_iterator it = structsNode.begin(); it != structsNode.end(); ++it) {
+//    string outerName = it->first.as<string>();
+//    if (outerName == "Any") {
+//      continue;
+//    }
+//    for (YAML::const_iterator it2 = it->second.begin(); it2 != it->second.end(); ++it2) {
+//      string moduleName = it2->first.as<string>();
+//      for (YAML::const_iterator it3 = it2->second.begin(); it3 != it2->second.end(); ++it3) {
+//        string containerName = it3->first.as<string>();
+//        for (YAML::const_iterator it4 = it3->second.begin(); it4 != it3->second.end(); ++it4) {
+//          string className = it4->first.as<string>();
+//          allNamespaces[renamedName(outerName)] = true;
+//          allNamespaces[renamedName(moduleName)] = true;
+//          allNamespaces[renamedName(containerName)] = true;
+//          allNamespaces[renamedName(className)] = true;
+//          cout << renamedName(moduleName) << "." << renamedName(containerName) << "." << renamedName(className) << endl;
+//          structsMeta[renamedName(moduleName)][renamedName(containerName)][renamedName(className)] = it4->second;
+//        }
+//      }
+//    }
+//  }
+//}
 
 void populateTypealiases()
 {
@@ -145,7 +162,7 @@ void populateTypealiases()
       string f = it2->first.as<string>();
       string s = it2->second.as<string>();
       
-      namespaceTypealiases[MetaData::renamedName(moduleName)][f] = s;
+      namespaceTypealiases[renamedName(moduleName)][f] = s;
     }
   }
 }
@@ -235,6 +252,8 @@ string DefinitionWriter::getTypeArgumentsStringOrEmpty(const clang::ObjCObjectTy
 
 void DefinitionWriter::visit(InterfaceMeta* meta)
 {
+  ostringstream out;
+
   CompoundMemberMap<MethodMeta> compoundStaticMethods;
   for (MethodMeta* method : meta->staticMethods) {
     compoundStaticMethods.emplace(method->name, make_pair(meta, method));
@@ -277,20 +296,48 @@ void DefinitionWriter::visit(InterfaceMeta* meta)
     }
     compoundStaticMethods.emplace(methodPair);
   }
-  
+
+  string metaName = meta->jsName;
+
   // TODO: Need to separate into ES6 modules to prevent overlaps like this
-  if (meta->jsName == "Port" && meta->module->getTopLevelModule()->Name == "AVFoundation") {
+  if (metaName == "Port" && meta->module->getTopLevelModule()->Name == "AVFoundation") {
     return;
   }
   
-  string metaName = meta->jsName;
+  if (metaName == "Set" || metaName == "String" || metaName == "NSObject") {
+    return;
+  }
+  
+  string containerName = metaName;
+  
+  string fullMetaName = renamedName(meta->jsName);
+  vector<string> metaNameTokens;
+  StringUtils::split(fullMetaName, '.', back_inserter(metaNameTokens));
+  
+  if (metaNameTokens.size() == 2) {
+    containerName = metaNameTokens[0];
+    metaName = metaNameTokens[1];
+  }
+  
   string parametersString = getTypeParametersStringOrEmpty(clang::cast<clang::ObjCInterfaceDecl>(meta->declaration));
   
-  _buffer << "// interface\n";
-  _buffer << "class " << metaName << parametersString;
-
+  // These conflict with TS global types
+  if (metaName == "Date" || metaName == "Error" || metaName == "Array" || metaName == "NSMutableString" || metaName == "NSSimpleCString") {
+    out << "// @ts-ignore\n";
+  }
+  
+  if (metaName == "Date" || metaName == "Error") {
+    out << "type " << metaName << " = NS" << metaName << "\n";
+    out << "export class NS" << metaName;
+  }
+  else {
+    out << "export class " << metaName;
+  }
+  
+  out << parametersString;
+  
   if (meta->base != nullptr) {
-    _buffer << " extends " << meta->base->jsName << getTypeArgumentsStringOrEmpty(clang::cast<clang::ObjCInterfaceDecl>(meta->declaration)->getSuperClassType());
+    out << " extends " << meta->base->jsName << getTypeArgumentsStringOrEmpty(clang::cast<clang::ObjCInterfaceDecl>(meta->declaration)->getSuperClassType());
   }
   
   CompoundMemberMap<PropertyMeta> protocolInheritedStaticProperties;
@@ -319,22 +366,22 @@ void DefinitionWriter::visit(InterfaceMeta* meta)
   } );
 
   if (metaProtocols.size()) {
-    _buffer << " implements ";
+    out << " implements ";
     
     for (size_t i = 0; i < metaProtocols.size(); i++) {
       string protoName = metaProtocols[i]->jsName;
       
       getProtocolMembersRecursive(metaProtocols[i], &compoundStaticMethods, &compoundInstanceMethods, &protocolInheritedStaticProperties, &protocolInheritedInstanceProperties, protocols);
       
-      _buffer << protoName;
+      out << protoName;
       
       if (i < metaProtocols.size() - 1) {
-        _buffer << ", ";
+        out << ", ";
       }
     }
   }
   
-  _buffer << " {" << endl;
+  out << " {" << endl;
 
   unordered_set<ProtocolMeta*> immediateProtocols;
   
@@ -348,87 +395,134 @@ void DefinitionWriter::visit(InterfaceMeta* meta)
     string output = writeMethod(methodPair, meta, immediateProtocols);
 
     if (output.size()) {
-      _buffer << "  // compoundStaticMethods\n";
+//      out << "  // compoundStaticMethods\n";
 
-      if (inheritedStaticMethods.find(methodPair.first) != inheritedStaticMethods.end()) {
-        _buffer << "  //";
+      if (ownStaticProperties.find(methodPair.second.second->jsName) != ownStaticProperties.end()) {
+        out << "  //";
       }
-
-      _buffer << "  static " << output << endl;
+      
+      if (compoundInstanceMethods.find(methodPair.first) != compoundInstanceMethods.end()) {
+        out << "  //";
+      }
+      
+      if (inheritedStaticMethods.find(methodPair.first) != inheritedStaticMethods.end()) {
+        out << "  //";
+      }
+      
+      if (ownInstanceProperties.find(methodPair.second.second->jsName) != ownInstanceProperties.end()) {
+        out << "  //";
+      }
+      
+      out << "  static " << output << endl;
     }
   }
   
   for (auto& propertyPair : ownInstanceProperties) {
     BaseClassMeta* owner = propertyPair.second.first;
     PropertyMeta* propertyMeta = propertyPair.second.second;
+    string propOut = this->writeProperty(propertyMeta, owner, meta, baseClassInstanceProperties);
+    
+    if (!propOut.empty()) {
+//      out << "  // ownInstanceProperties\n";
 
-     _buffer << "  // ownInstanceProperties\n";
+      // if this (selectedCell) ownInstanceProperties exists in parent class's methods (selectedCell())
+      if (protocolInheritedStaticProperties.find(propertyMeta->name) != protocolInheritedStaticProperties.end()) {
+        out << "  // ";
+      }
+      if (compoundInstanceMethods.find(propertyMeta->name) != compoundInstanceMethods.end()) {
+        out << "  // ";
+      }
+      if (compoundInstanceMethods.find(propertyMeta->name) != compoundInstanceMethods.end()) {
+        out << "  // ";
+      }
 
-    // if this (selectedCell) ownInstanceProperties exists in parent class's methods (selectedCell())
-    if (protocolInheritedStaticProperties.find(propertyMeta->name) != protocolInheritedStaticProperties.end()) {
-      _buffer << "  // ";
-    }
-    if (ownStaticProperties.find(propertyMeta->name) != ownStaticProperties.end()) {
-      _buffer << "  // ";
-    }
-    if (baseClassStaticProperties.find(propertyMeta->name) != baseClassStaticProperties.end()) {
-      _buffer << "  // ";
-    }
-    if (inheritedStaticMethods.find(propertyMeta->name) != inheritedStaticMethods.end()) {
-      _buffer << "  // ";
-    }
-    if (owner != meta) {
-      _buffer << "  // ";
-    }
+      if (meta->nameExistsInSuperclass(propertyMeta->name, Method)) {
+        cerr << "Skipping property that exists as method in " << meta->jsName << " superclass: `" << propertyMeta->name << "`" << endl;
+        continue;
+      }
+      
+//      if (meta->nameExistsInSuperclass(propertyMeta->name, Property)) {
+//        cerr << "Skipping property that exists as property in " << meta->jsName << " superclass: `" << propertyMeta->name << "`" << endl;
+//        continue;
+//      }
+      
+      if (compoundStaticMethods.find(propertyMeta->name) != compoundStaticMethods.end()) {
+        out << "  // ";
+      }
+      if (baseClassStaticProperties.find(propertyMeta->name) != baseClassStaticProperties.end()) {
+        out << "  // ";
+      }
+      if (inheritedStaticMethods.find(propertyMeta->name) != inheritedStaticMethods.end()) {
+        out << "  // ";
+      }
+      if (owner != meta) {
+        out << "  // ";
+      }
 
-    this->writeProperty(propertyMeta, owner, meta, baseClassInstanceProperties);
+      out << propOut;
+    }
   }
   
   for (auto& propertyPair : ownStaticProperties) {
     BaseClassMeta* owner = propertyPair.second.first;
     PropertyMeta* propertyMeta = propertyPair.second.second;
     
-   _buffer << "  // ownStaticProperties\n";
+//   out << "  // ownStaticProperties\n";
 
-    if (owner != meta) {
-      _buffer << "  // ";
+    if (protocolInheritedStaticProperties.find(propertyMeta->name) != protocolInheritedStaticProperties.end()) {
+      out << "  // ";
     }
-    
-    this->writeProperty(propertyMeta, owner, meta, baseClassInstanceProperties);
+    if (ownInstanceProperties.find(propertyMeta->name) != ownInstanceProperties.end()) {
+      out << "  // ";
+    }
+    if (compoundStaticMethods.find(propertyMeta->name) != compoundStaticMethods.end()) {
+      out << "  // ";
+    }
+    if (baseClassStaticProperties.find(propertyMeta->name) != baseClassStaticProperties.end()) {
+      out << "  // ";
+    }
+    if (inheritedStaticMethods.find(propertyMeta->name) != inheritedStaticMethods.end()) {
+      out << "  // ";
+    }
+    if (owner != meta) {
+      out << "  // ";
+    }
+
+    out << this->writeProperty(propertyMeta, owner, meta, baseClassInstanceProperties);
   }
   
   for (auto& propertyPair : protocolInheritedInstanceProperties) {
     BaseClassMeta* owner = propertyPair.second.first;
     PropertyMeta* propertyMeta = propertyPair.second.second;
     
-     _buffer << "  // protocolInheritedInstanceProperties\n";
+//     out << "  // protocolInheritedInstanceProperties\n";
 
     bool isDuplicated = ownInstanceProperties.find(propertyMeta->name) != ownInstanceProperties.end();
     
     if (immediateProtocols.find(reinterpret_cast<ProtocolMeta*>(owner)) == immediateProtocols.end() || isDuplicated) {
-      _buffer << "  // ";
+      out << "  // ";
     }
     
-    this->writeProperty(propertyMeta, owner, meta, baseClassInstanceProperties);
+    out << this->writeProperty(propertyMeta, owner, meta, baseClassInstanceProperties);
   }
   
   for (auto& propertyPair : protocolInheritedStaticProperties) {
     BaseClassMeta* owner = propertyPair.second.first;
     PropertyMeta* propertyMeta = propertyPair.second.second;
 
-    _buffer << "  // protocolInheritedStaticProperties\n";
-    this->writeProperty(propertyMeta, owner, meta, baseClassStaticProperties);
+//    out << "  // protocolInheritedStaticProperties\n";
+    out << this->writeProperty(propertyMeta, owner, meta, baseClassStaticProperties);
   }
   
 //  auto objectAtIndexedSubscript = compoundInstanceMethods.find("objectAtIndexedSubscript");
 //  if (objectAtIndexedSubscript != compoundInstanceMethods.end()) {
 //    const Type* retType = objectAtIndexedSubscript->second.second->signature[0];
 //    string indexerReturnType = computeMethodReturnType(retType, meta, true);
-//    _buffer << "  [index: number]: " << indexerReturnType << ";" << endl;
+//    out << "  [index: number]: " << indexerReturnType << ";" << endl;
 //  }
 //
 //  if (compoundInstanceMethods.find("countByEnumeratingWithStateObjectsCount") != compoundInstanceMethods.end()) {
-//    _buffer << "  [Symbol.iterator](): Iterator<any>;" << endl;
+//    out << "  [Symbol.iterator](): Iterator<any>;" << endl;
 //  }
   
   for (auto& methodPair : compoundInstanceMethods) {
@@ -437,31 +531,50 @@ void DefinitionWriter::visit(InterfaceMeta* meta)
 
     string output = writeMethod(methodPair, meta, immediateProtocols, true);
 
-    // TODO: more robust sytem for renaming duplicate fn names
-    VueComponentFormatter::current.findAndReplaceIn(output, "drawTitleWithFrameIn(withFrame", "drawTitleWithFrameIn_(withFrame");
-    VueComponentFormatter::current.findAndReplaceIn(output, "cellSize():", "cellSize_():");
-    
     if (output.size()) {
-       _buffer << "  // compoundInstanceMethods\n";
+//       out << "  // compoundInstanceMethods\n";
 
-      if (inheritedStaticMethods.find(method->name) != inheritedStaticMethods.end()) {
-        _buffer << "  //";
-      }
-      if (owner != meta) {
-        _buffer << "  //";
+//      if (meta->nameExistsInSuperclass(method->jsName, Method)) {
+//        cerr << "Skipping method that exists as method in " << meta->jsName << " superclass: `" << method->jsName << "`" << endl;
+//        continue;
+//      }
+      
+      if (meta->nameExistsInSuperclass(method->jsName, Property)) {
+        cerr << "Skipping method that exists as property in " << meta->jsName << " superclass: `" << method->jsName << "`" << endl;
+        continue;
       }
       
-      _buffer << "  " << output << endl;
+      if (ownStaticProperties.find(method->jsName) != ownStaticProperties.end()) {
+        out << "  // dupe name w static property ";
+      }
+      if (ownInstanceProperties.find(method->jsName) != ownInstanceProperties.end()) {
+        out << "  // dupe name w instance property ";
+      }
+      if (inheritedStaticMethods.find(method->jsName) != inheritedStaticMethods.end()) {
+        out << "  // dupe name w inherited static method";
+      }
+      if (owner != meta) {
+        out << "  // owner not meta";
+      }
+      
+      out << "  " << output << endl;
     }
   }
   
   allNamespaces[meta->module->Name] = true;
   allClasses[meta->jsName] = true;
   
-  _buffer << "}" << endl << endl;
+  out << "}" << endl << endl;
+  
+  if (containerName != metaName) {
+    namespaceClasses[containerName].push_back(out.str());
+    return;
+  }
+
+  _buffer << out.str();
 }
 
-void DefinitionWriter::writeProperty(PropertyMeta* propertyMeta, BaseClassMeta* owner, InterfaceMeta* target, CompoundMemberMap<PropertyMeta> baseClassProperties)
+string DefinitionWriter::writeProperty(PropertyMeta* propertyMeta, BaseClassMeta* owner, InterfaceMeta* target, CompoundMemberMap<PropertyMeta> baseClassProperties)
 {
   bool optOutTypeChecking = false;
   auto result = baseClassProperties.find(propertyMeta->name);
@@ -469,17 +582,23 @@ void DefinitionWriter::writeProperty(PropertyMeta* propertyMeta, BaseClassMeta* 
     optOutTypeChecking = result->second.second->getter->signature[0] != propertyMeta->getter->signature[0];
   }
   
+  if (propertyMeta->getUnavailableInSwift(owner)) {
+    return "";
+  }
+  
   string output = writeProperty(propertyMeta, target, optOutTypeChecking);
   
   if (!output.empty()) {
-    _buffer << "  ";
+    string out = "  ";
     
     if (clang::cast<clang::ObjCPropertyDecl>(propertyMeta->declaration)->isClassProperty()) {
-      _buffer << "static ";
+      out += "static ";
     }
     
-    _buffer << output << endl;
+    return out + output + "\n";
   }
+  
+  return output;
 }
 
 void DefinitionWriter::getInheritedMembersRecursive(InterfaceMeta* interface,
@@ -594,36 +713,36 @@ void DefinitionWriter::visit(ProtocolMeta* meta)
   map<string, PropertyMeta*> conformedProtocolsProperties;
   map<string, MethodMeta*> conformedProtocolsMethods;
 
-  if (meta->protocols.size()) {
-    _buffer << " extends ";
-    for (size_t i = 0; i < meta->protocols.size(); i++) {
-      transform(
-                     meta->protocols[i]->instanceProperties.begin(),
-                     meta->protocols[i]->instanceProperties.end(),
-                     inserter(conformedProtocolsProperties,
-                                   conformedProtocolsProperties.end()
-                                   ),
-                     []
-                     (PropertyMeta* propertyMeta) {
-        return make_pair(propertyMeta->name, propertyMeta);
-      });
-      transform(
-                     meta->protocols[i]->instanceMethods.begin(),
-                     meta->protocols[i]->instanceMethods.end(),
-                     inserter(conformedProtocolsMethods,
-                                   conformedProtocolsMethods.end()
-                                   ),
-                     []
-                     (MethodMeta* methodMeta) {
-        return make_pair(methodMeta->name, methodMeta);
-      });
-
-      _buffer << meta->protocols[i]->jsName;
-      if (i < meta->protocols.size() - 1) {
-        _buffer << ", ";
-      }
-    }
-  }
+//  if (meta->protocols.size()) {
+//    _buffer << " extends ";
+//    for (size_t i = 0; i < meta->protocols.size(); i++) {
+//      transform(
+//                     meta->protocols[i]->instanceProperties.begin(),
+//                     meta->protocols[i]->instanceProperties.end(),
+//                     inserter(conformedProtocolsProperties,
+//                                   conformedProtocolsProperties.end()
+//                                   ),
+//                     []
+//                     (PropertyMeta* propertyMeta) {
+//        return make_pair(propertyMeta->name, propertyMeta);
+//      });
+//      transform(
+//                     meta->protocols[i]->instanceMethods.begin(),
+//                     meta->protocols[i]->instanceMethods.end(),
+//                     inserter(conformedProtocolsMethods,
+//                                   conformedProtocolsMethods.end()
+//                                   ),
+//                     []
+//                     (MethodMeta* methodMeta) {
+//        return make_pair(methodMeta->name, methodMeta);
+//      });
+//
+//      _buffer << meta->protocols[i]->jsName;
+//      if (i < meta->protocols.size() - 1) {
+//        _buffer << ", ";
+//      }
+//    }
+//  }
   
   _buffer << " {" << endl;
   
@@ -654,7 +773,7 @@ void DefinitionWriter::visit(ProtocolMeta* meta)
     string output = writeMethod(method, meta);
     
     if (output.size()) {
-       _buffer << "  // instance method\n";
+//       _buffer << "  // instance method\n";
       _buffer << "  " << output << endl;
     }
   }
@@ -716,7 +835,6 @@ bool DefinitionWriter::getTypeOptional(clang::ASTContext &Ctx, clang::Decl::ObjC
 
 string DefinitionWriter::getInstanceParamsStr(MethodMeta* method, BaseClassMeta* owner) {
   vector<string> argumentLabels = method->argLabels;
-  argumentLabels.erase(argumentLabels.begin());
   
   string output = "";
   const clang::ObjCMethodDecl& methodDecl = *clang::dyn_cast<clang::ObjCMethodDecl>(method->declaration);
@@ -801,17 +919,17 @@ string DefinitionWriter::getInstanceParamsStr(MethodMeta* method, BaseClassMeta*
     // vs ts native types [String vs string] are written)
     
     // Something with formatTypeId here
-    VueComponentFormatter::current.findAndReplaceIn(returnType, ",id", ", any");
+    VueComponentFormatter::current.findAndReplaceIn2(returnType, ",id", ", any");
     
     // Could be done better, but need to be careful to only do this for params,
     // any maybe not for NSDictionary subclasses
-    VueComponentFormatter::current.findAndReplaceIn(returnType, "NSDictionary<", "Map<");
+    VueComponentFormatter::current.findAndReplaceIn2(returnType, "NSDictionary<", "Map<");
     
-    if (returnType == "NSDictionary" || returnType == "NSMutableDictionary") {
+    if (returnType == "Dictionary" || returnType == "NSDictionary" || returnType == "NSMutableDictionary") {
       // sometimes shows up by itself without <generic> params
       returnType = "Map<any, any>";
     }
-    if (returnType == "NSArray" || returnType == "NSMutableArray") {
+    if (returnType == "Array" || returnType == "NSArray" || returnType == "NSMutableArray") {
       // sometimes shows up by itself without <generic> params
       returnType = "any[]";
     }
@@ -822,18 +940,15 @@ string DefinitionWriter::getInstanceParamsStr(MethodMeta* method, BaseClassMeta*
     else if (returnType == "NSMeasurement") {
       returnType = "NSMeasurement<UnitType>";
     }
-    else if (returnType == "dtdKind") {
-      returnType = "XMLDTDNode.DTDKind";
-    }
+//    else if (returnType == "dtdKind") {
+//      returnType = "XMLDTDNode.DTDKind";
+//    }
     else if (returnType == "NSFetchRequest") {
       returnType = "NSFetchRequest<any>";
     }
 
-    // NSCopying is special as noted elsewhere, this fix should happen earlier
-    VueComponentFormatter::current.findAndReplaceIn(returnType, "<NSCopying>", "");
-
-//    VueComponentFormatter::current.findAndReplaceIn(returnType, "NSNetService", "NetService");
-    VueComponentFormatter::current.findAndReplaceIn(returnType, "dtdKind", "XMLDTDNode.DTDKind");
+    VueComponentFormatter::current.findAndReplaceIn2(returnType, "<NSCopying>", "");
+//    VueComponentFormatter::current.findAndReplaceIn2(returnType, "dtdKind", "XMLDTDNode.DTDKind");
     
     output += sanitizeParameterName(returnType);
 
@@ -913,9 +1028,16 @@ string DefinitionWriter::writeMethod(MethodMeta* method, BaseClassMeta* owner, b
   }
   
   ostringstream output;
-
+  
   const Type* retType = method->signature[0];
   string returnType = computeMethodReturnType(retType, owner, canUseThisType);
+
+  // For some reason, has different params than the method it is overriding
+  if (owner->jsName == "NSMenuItemCell") {
+    if (method->builtName() == "drawImageWithFrameInView" || method->builtName() == "drawTitleWithFrameInView") {
+      output << "// ";
+    }
+  }
 
   if (method->getFlags(MethodIsInitializer)) {
     // TODO: Fix string comparison, use hasClosedGenerics() instead
@@ -925,17 +1047,19 @@ string DefinitionWriter::writeMethod(MethodMeta* method, BaseClassMeta* owner, b
     
     output << "static ";
   }
-  
-//  string bridgedName = method->bridgedName(hasNonArrayNonObjectGeneric);
+
+//  string methodName = method->builtName();
 //
-//  if (bridgedName == "cellSize") {
-//    bridgedName = "cellSize_";
+//  if (methodName.empty()) {
+//    cerr << "Falling back to " << method->jsName << " (" << method->name << ")" << endl;
+    output << method->jsName;
 //  }
-
-  output << method->jsName;
-
+//  else {
+//    output << methodName;
+//  }
+  
   if (!methodDecl.isInstanceMethod() && owner->is(MetaType::Interface)) {
-    if ((retType->is(TypeInstancetype) || DefinitionWriter::hasClosedGenerics(*retType))) {
+    if ((retType->is(TypeInstancetype) || retType->hasClosedGenerics())) {
       auto decl = clang::cast<clang::ObjCInterfaceDecl>(static_cast<const InterfaceMeta*>(owner)->declaration);
       output << getTypeParametersStringOrEmpty(decl);
     } else if (!paramsGenerics.empty()) {
@@ -951,12 +1075,7 @@ string DefinitionWriter::writeMethod(MethodMeta* method, BaseClassMeta* owner, b
     }
   }
   
-  if ((owner->type == MetaType::Protocol && methodDecl.getImplementationControl() == clang::ObjCMethodDecl::ImplementationControl::Optional) || (owner->is(MetaType::Protocol) && method->getFlags(MethodIsInitializer))) {
-    output << "?";
-  }
-  
   string paramsString = getInstanceParamsStr(method, owner);
-  
   output << paramsString << ": ";
   
   // Method return type
@@ -964,8 +1083,17 @@ string DefinitionWriter::writeMethod(MethodMeta* method, BaseClassMeta* owner, b
   if (returnType == "NSFetchRequest") {
     returnType = "NSFetchRequest<any>";
   }
-  
+    
   output << returnType;
+
+//  if (
+//      (owner->type == MetaType::Protocol &&
+//       methodDecl.getImplementationControl() == clang::ObjCMethodDecl::ImplementationControl::Optional)
+//      ||
+//      (owner->is(MetaType::Protocol) && method->getFlags(MethodIsInitializer))
+//     ) {
+//    output << "?";
+//  }
   
   output << ";";
   
@@ -977,6 +1105,10 @@ string DefinitionWriter::writeMethod(CompoundMemberMap<MethodMeta>::value_type& 
   
   BaseClassMeta* memberOwner = methodPair.second.first;
   MethodMeta* method = methodPair.second.second;
+
+  if (method->getUnavailableInSwift(owner)) {
+    return string();
+  }
   
   if (hiddenMethods.find(method->jsName) != hiddenMethods.end()) {
     return string();
@@ -987,14 +1119,12 @@ string DefinitionWriter::writeMethod(CompoundMemberMap<MethodMeta>::value_type& 
   bool returnsInstanceType = method->signature[0]->is(TypeInstancetype);
   
   ostringstream output;
-  
+
+//  if (method->jsName == "isEnabled") {
+//    output << "// @ts-ignore \n  ";
+//  }
+
   if (isOwnMethod || implementsProtocol || returnsInstanceType) {
-    bool unavailableInSwift = MetaData::getUnavailableInSwift(method, owner);
-    
-    if (unavailableInSwift) {
-      output << "  // unavailableInSwift ";
-    }
-    
     output << writeMethod(method, owner, canUseThisType);
   }
   
@@ -1011,11 +1141,14 @@ string DefinitionWriter::writeProperty(PropertyMeta* meta, BaseClassMeta* owner,
     return string();
   }
   
-  bool unavailableInSwift = TypeScript::MetaData::getUnavailableInSwift(meta, owner);
-  
-  if (unavailableInSwift) {
+  if (meta->getUnavailableInSwift(owner)) {
     output << "  // unavailableInSwift ";
   }
+  
+  // for isEnabled b/c lazy
+//  if (meta->jsName == "isEnabled") {
+//    output << "// @ts-ignore \n  ";
+//  }
   
   if (meta->getter && !meta->getter->jsName.empty()) {
     output << meta->getter->jsName;
@@ -1043,9 +1176,9 @@ string DefinitionWriter::writeProperty(PropertyMeta* meta, BaseClassMeta* owner,
     string setterName = meta->setter->name;
     setterName.pop_back();
     
-    // Output corresponding setter for this property
+    // Write setter too
     output << endl;
-    output << "  " << setterName << "(_: " + returnType + ")";
+    output << "  " << setterName << "(_: " + returnType + ");";
   }
   
   return output.str();
@@ -1066,7 +1199,7 @@ void DefinitionWriter::visit(FunctionMeta* meta)
   for (size_t i = 1; i < meta->signature.size(); i++) {
     string name = sanitizeParameterName(functionDecl.getParamDecl(i - 1)->getNameAsString());
     string tsified = tsifyType(*meta->signature[i], true);
-    string renamed = MetaData::renamedName(tsified);
+    string renamed = renamedName(tsified);
     string paramTypeStr = jsifyTypeName(renamed);
 
     params << (name.size() ? name : "p" + to_string(i)) << ": " << paramTypeStr;
@@ -1098,6 +1231,8 @@ map<string, vector<StructMeta*>> objcStructs;
 
 void DefinitionWriter::visit(StructMeta* meta)
 {
+//  cout << "struct: " << meta->name << endl;
+
   allNamespaces[meta->module->Name] = true;
 //  string metaName = meta->jsName;
 //  TSComment comment = _docSet.getCommentFor(meta);
@@ -1144,8 +1279,82 @@ string DefinitionWriter::writeMembers(const vector<RecordField>& fields, vector<
 // MARK: - Visit Enum
 void DefinitionWriter::visit(EnumMeta* meta)
 {
-  allNamespaces[meta->module->Name] = true;
-  namespaceEnums[meta->module->Name].push_back(meta);
+//  cout << "enum: " << meta->name << endl;
+
+  string enumName;
+  string enumContainer = "_container";
+  string moduleName = renamedName(meta->module->Name);
+
+  string fullEnumName = renamedName(meta->jsName);
+  vector<string> enumTokens;
+  StringUtils::split(fullEnumName, '.', back_inserter(enumTokens));
+  
+  if (enumTokens.size() == 1) {
+    enumName = renamedName(enumTokens[0]);
+  }
+  else if (enumTokens.size() == 2) {
+    enumContainer = renamedName(enumTokens[0]);
+    enumName = renamedName(enumTokens[1]);
+  }
+  
+  string renamedEnumContainer = renamedName(enumContainer);
+  vector<string> renamedEnumContainerTokens;
+  StringUtils::split(renamedEnumContainer, '.', back_inserter(renamedEnumContainerTokens));
+
+  if (renamedEnumContainerTokens.size() == 1) {
+    enumContainer = renamedName(renamedEnumContainerTokens[0]);
+  }
+  else if (renamedEnumContainerTokens.size() == 2) {
+    moduleName = renamedName(renamedEnumContainerTokens[0]);
+    enumContainer = renamedName(renamedEnumContainerTokens[1]);
+  }
+
+  string renamedEnumName = renamedName(enumName);
+  vector<string> renamedEnumNameTokens;
+  StringUtils::split(renamedEnumName, '.', back_inserter(renamedEnumNameTokens));
+  
+  if (renamedEnumNameTokens.size() == 1) {
+    enumName = renamedName(renamedEnumNameTokens[0]);
+  }
+  else if (renamedEnumNameTokens.size() == 2) {
+    moduleName = renamedName(renamedEnumNameTokens[0]);
+    enumContainer = renamedName(renamedEnumNameTokens[1]);
+  }
+
+  allNamespaces[moduleName] = true;
+  
+  if (moduleName == enumContainer) {
+    enumContainer = "_container";
+  }
+  else {
+    // Add any enums from base classes
+    if (moduleName == "NSCollectionViewFlowLayout") {
+      vector<string> parentNameParts;
+      StringUtils::split(meta->jsName, '.', back_inserter(parentNameParts));
+
+      if (parentNameParts.size() > 1) {
+        string parentName = parentNameParts[0];
+        
+        for (const auto& fooBar: namespaceEnums[parentName]["_container"]) {
+          for (const auto& baz: fooBar.second) {
+            if (namespaceEnums[moduleName][enumContainer][fooBar.first].empty()) {
+              namespaceEnums[moduleName][enumContainer][fooBar.first].push_back(baz);
+            }
+          }
+        }
+      }
+    }
+
+    if (enumContainer != "_container") {
+      if (namespaceEnums[moduleName][enumContainer][enumName].empty()) {
+        namespaceEnums[enumContainer]["_container"][enumName].push_back(meta);
+      }
+    }
+  }
+  
+  if (namespaceEnums[moduleName][enumContainer][enumName].empty()) {
+    namespaceEnums[moduleName][enumContainer][enumName].push_back(meta);
+  }
 }
 
 void DefinitionWriter::visit(VarMeta* meta)
@@ -1186,26 +1395,20 @@ void DefinitionWriter::visit(EnumConstantMeta* meta)
   allNamespaces[meta->module->Name] = true;
 }
 
-bool DefinitionWriter::hasClosedGenerics(const Type& type)
-{
-  if (type.is(TypeInterface)) {
-    const InterfaceType& interfaceType = type.as<InterfaceType>();
-    if (interfaceType.interface->name == "NSCandidateListTouchBarItem") {
-      return true;
-    }
-    return interfaceType.typeArguments.size();
-  }
-  
-  return false;
-}
+// MARK: - TSify Type
 
 string DefinitionWriter::tsifyType(const Type& type, const bool isFuncParam)
 {
+  string typeStr;
+  string enumModuleName;
+  
   switch (type.getType()) {
     case TypeVoid:
-      return "void";
+      typeStr = "void";
+      break;
     case TypeBool:
-      return "boolean";
+      typeStr = "boolean";
+      break;
     case TypeSignedChar:
     case TypeUnsignedChar:
     case TypeShort:
@@ -1218,104 +1421,107 @@ string DefinitionWriter::tsifyType(const Type& type, const bool isFuncParam)
     case TypeULongLong:
     case TypeFloat:
     case TypeDouble:
-      return "number";
+      typeStr = "number";
+      break;
     case TypeUnichar:
     case TypeSelector:
-      return "string";
+      typeStr = "string";
+      break;
     case TypeCString: {
       string res = "string";
       if (isFuncParam) {
         Type typeVoid(TypeVoid);
-        res += " | " + JSExportFormatter::current.nameForJSExport(MetaData::lookupApiNotes(tsifyType(::Meta::PointerType(&typeVoid), isFuncParam)));
+        res += " | " + Type::nameForJSExport(Type::lookupApiNotes(tsifyType(::Meta::PointerType(&typeVoid), isFuncParam)));
       }
-      return res;
+      typeStr = res;
+      break;
     }
     case TypeProtocol:
-      return "any /* Protocol */";
+      typeStr = "any /* Protocol */";
+      break;
     case TypeClass:
-      return "typeof NSObject";
+      typeStr = "typeof NSObject";
+      break;
     case TypeId: {
       const IdType& idType = type.as<IdType>();
-      if (idType.protocols.size() == 1) {
-        string protocol = idType.protocols[0]->jsName;
-        if (protocol != "NSCopying") {
-          return protocol;
-        }
+      if (idType.protocols.size() == 1 && idType.protocols[0]->jsName != "NSCopying") {
+          typeStr = idType.protocols[0]->jsName;
       }
-      return "any";
+      typeStr = "any";
+      break;
     }
     case TypeConstantArray:
     case TypeExtVector:
-      //        return "interop.Reference<" + tsifyType(*type.as<ConstantArrayType>().innerType) + ">";
-      return JSExportFormatter::current.nameForJSExport(MetaData::lookupApiNotes(tsifyType(*type.as<ConstantArrayType>().innerType)));
+      //        typeStr = "interop.Reference<" + tsifyType(*type.as<ConstantArrayType>().innerType) + ">";
+      typeStr = Type::nameForJSExport(Type::lookupApiNotes(tsifyType(*type.as<ConstantArrayType>().innerType)));
+      break;
     case TypeIncompleteArray:
-      //        return "interop.Reference<" + tsifyType(*type.as<IncompleteArrayType>().innerType) + ">";
-      return JSExportFormatter::current.nameForJSExport(MetaData::lookupApiNotes(tsifyType(*type.as<IncompleteArrayType>().innerType)));
+      //        typeStr = "interop.Reference<" + tsifyType(*type.as<IncompleteArrayType>().innerType) + ">";
+      typeStr = Type::nameForJSExport(Type::lookupApiNotes(tsifyType(*type.as<IncompleteArrayType>().innerType)));
+      break;
     case TypePointer: {
       const PointerType& pointerType = type.as<PointerType>();
-      return (pointerType.innerType->is(TypeVoid)) ? "any" : JSExportFormatter::current.nameForJSExport(MetaData::lookupApiNotes(tsifyType(*pointerType.innerType)));
+      typeStr = (pointerType.innerType->is(TypeVoid)) ? "any" : Type::nameForJSExport(Type::lookupApiNotes(tsifyType(*pointerType.innerType)));
+      break;
     }
     case TypeBlock:
-      return JSExportFormatter::current.nameForJSExport(MetaData::lookupApiNotes(writeFunctionProto(type.as<BlockType>().signature)));
+      return Type::nameForJSExport(Type::lookupApiNotes(writeFunctionProto(type.as<BlockType>().signature)));
     case TypeFunctionPointer:
-      return JSExportFormatter::current.nameForJSExport(MetaData::lookupApiNotes(writeFunctionProto(type.as<FunctionPointerType>().signature)));
+      return Type::nameForJSExport(Type::lookupApiNotes(writeFunctionProto(type.as<FunctionPointerType>().signature)));
     case TypeInterface:
     case TypeBridgedInterface: {
       if (type.is(TypeType::TypeBridgedInterface) && type.as<BridgedInterfaceType>().isId()) {
-        return JSExportFormatter::current.nameForJSExport(MetaData::lookupApiNotes(tsifyType(IdType())));
+        typeStr = Type::nameForJSExport(Type::lookupApiNotes(tsifyType(IdType())));
+        break;
       }
 
       const InterfaceMeta& interface = type.is(TypeType::TypeInterface) ? *type.as<InterfaceType>().interface : *type.as<BridgedInterfaceType>().bridgedInterface;
-      
+      const InterfaceType& interfaceType = type.as<InterfaceType>();
+
       if (interface.name == "NSNumber") {
-        return "number";
+        typeStr = "number";
+        break;
       }
       else if (interface.name == "NSString") {
-        return "string";
+        typeStr = "string";
+        break;
       }
       else if (interface.name == "NSDate") {
-        return "Date";
+        typeStr = "Date";
+        break;
       }
 
       ostringstream output;
-      bool hasClosed = hasClosedGenerics(type);
-      string firstElementType;
+      bool hasClosed = type.hasClosedGenerics();
       string interfaceName = interface.jsName;
-      
-      if (interfaceName == "NSDictionary") {
+      bool isDictionary = interface.name == "NSDictionary" || interface.name == "NSMutableDictionary";
+      bool isArray = interface.name == "NSArray" || interface.name == "NSMutableArray";
+
+      if (isDictionary) {
         interfaceName = "Map";
       }
 
-      if (interface.name == "NSArray") {
+      if (isArray) {
         if (hasClosed) {
-          const InterfaceType& interfaceType = type.as<InterfaceType>();
           string arrayType = tsifyType(*interfaceType.typeArguments[0]);
-          arrayType = MetaData::renamedName(interface.name + "." + arrayType);
-
-          output << arrayType << "[]";
-        } else {
+          output << renamedName(arrayType) << "[]";
+        }
+        else {
           output << "any[]";
         }
       }
       else if (hasClosed) {
         output << interfaceName;
-        
-        const InterfaceType& interfaceType = type.as<InterfaceType>();
-
-        output << "<";
-
-        for (size_t i = 0; i < interfaceType.typeArguments.size(); i++) {
-          string argType = JSExportFormatter::current.nameForJSExport(MetaData::lookupApiNotes(tsifyType(*interfaceType.typeArguments[i])));
-          output << argType;
-          if (i == 0) {
-            firstElementType = argType;//we only need this for NSArray
-          }
-          if (i < interfaceType.typeArguments.size() - 1) {
-            output << ", ";
-          }
+        if (interfaceType.typeArguments.size() == 2) {
+          output << "<";
+          output << tsifyType(*interfaceType.typeArguments[0]);
+          output << ", ";
+          output << tsifyType(*interfaceType.typeArguments[1]);
+          output << ">";
         }
-
-        output << ">";
+        else {
+          output << "<any>";
+        }
       }
       else {
         output << interfaceName;
@@ -1333,49 +1539,109 @@ string DefinitionWriter::tsifyType(const Type& type, const bool isFuncParam)
         }
       }
 
-      return output.str();
+      typeStr = output.str();
+
+      break;
     }
     case TypeStruct: {
       const StructType& structType = type.as<StructType>();
-      return structType.structMeta->jsName;
-//      if (structType.structMeta->swiftModule == "_global" && structType.structMeta->module->Name == "_global") {
-//        return structType.structMeta->jsName;
-//      }
-//      return structType.structMeta->module->Name + "." + structType.structMeta->jsName;
+      typeStr = structType.structMeta->jsName;
+      break;
     }
     case TypeUnion:
-      return (*type.as<UnionType>().unionMeta).jsName;
+      typeStr = (*type.as<UnionType>().unionMeta).jsName;
+      break;
     case TypeAnonymousStruct:
     case TypeAnonymousUnion: {
       ostringstream output;
       output << "{ ";
-
       const vector<RecordField>& fields = type.as<AnonymousStructType>().fields;
       for (auto& field : fields) {
-        output << JSExportFormatter::current.nameForJSExport(MetaData::lookupApiNotes(field.name)) << ": " << JSExportFormatter::current.nameForJSExport(MetaData::lookupApiNotes(tsifyType(*field.encoding))) << "; ";
+        output << Type::nameForJSExport(Type::lookupApiNotes(field.name)) << ": " << Type::nameForJSExport(Type::lookupApiNotes(tsifyType(*field.encoding))) << "; ";
       }
-
       output << "}";
-      return output.str();
+      typeStr = output.str();
+      break;
     }
     case TypeEnum: {
       const EnumType& enumType = type.as<EnumType>();
-      return enumType.enumMeta->jsName;
-//      if (enumType.enumMeta->swiftModule == "_global" && enumType.enumMeta->module->Name == "_global") {
-//        return enumType.enumMeta->jsName;
-//      }
-//      return enumType.enumMeta->module->Name + "." + enumType.enumMeta->jsName;
+      enumModuleName = renamedName(enumType.enumMeta->module->Name);
+      typeStr = enumType.enumMeta->jsName;
+      break;
     }
     case TypeTypeArgument:
-      return JSExportFormatter::current.nameForJSExport(MetaData::lookupApiNotes(type.as<TypeArgumentType>().name));
+      typeStr = Type::nameForJSExport(Type::lookupApiNotes(type.as<TypeArgumentType>().name));
+      break;
     case TypeVaList:
     case TypeInstancetype:
     default:
       break;
   }
-
-  assert(false);
-  return "";
+  
+  string typeName = renamedName(typeStr);
+  string containerName = "_container";
+  string moduleName = "_container";
+  
+  vector<string> typeNameTokens;
+  StringUtils::split(typeStr, '.', back_inserter(typeNameTokens));
+  
+  if (typeNameTokens.size() == 1) {
+    typeName = renamedName(typeNameTokens[0]);
+  }
+  else if (typeNameTokens.size() == 2) {
+    containerName = renamedName(typeNameTokens[0]);
+    typeName = renamedName(typeNameTokens[1]);
+  }
+  
+  string renamedTypeContainer = renamedName(containerName);
+  vector<string> renamedTypeContainerTokens;
+  StringUtils::split(renamedTypeContainer, '.', back_inserter(renamedTypeContainerTokens));
+  
+  if (renamedTypeContainerTokens.size() == 1) {
+    containerName = renamedName(renamedTypeContainerTokens[0]);
+  }
+  else if (renamedTypeContainerTokens.size() == 2) {
+    moduleName = renamedName(renamedTypeContainerTokens[0]);
+    containerName = renamedName(renamedTypeContainerTokens[1]);
+  }
+  
+  string renamedTypeName = renamedName(typeName);
+  vector<string> renamedTypeNameTokens;
+  StringUtils::split(renamedTypeName, '.', back_inserter(renamedTypeNameTokens));
+  
+  if (renamedTypeNameTokens.size() == 1) {
+    typeName = renamedName(renamedTypeNameTokens[0]);
+  }
+  else if (renamedTypeNameTokens.size() == 2) {
+    moduleName = renamedName(renamedTypeNameTokens[0]);
+    containerName = renamedName(renamedTypeNameTokens[1]);
+  }
+  
+  if (moduleName == "_container" && containerName == "_container") {
+    if (enumModuleName.empty()) {
+      return typeName;
+    }
+    else {
+      return enumModuleName + "." + typeName;
+    }
+  }
+  
+  if (moduleName == "_container") {
+    if (!enumModuleName.empty() &&
+        enumModuleName != containerName &&
+        enumModuleName != containerName + "." + typeName) {
+      return enumModuleName + "." + containerName + "." + typeName;
+    }
+    else {
+      return containerName + "." + typeName;
+    }
+  }
+  
+  if (containerName == "_container") {
+    return moduleName + "." + typeName;
+  }
+  
+  return moduleName + "." + containerName + "." + typeName;
 }
 
 string DefinitionWriter::computeMethodReturnType(const Type* retType, const BaseClassMeta* owner, bool instanceMember)
@@ -1390,7 +1656,17 @@ string DefinitionWriter::computeMethodReturnType(const Type* retType, const Base
     }
   }
   else {
-    output << tsifyType(*retType);
+    string typeStr = tsifyType(*retType);
+    
+    // Add prefix for types that are in same namespace as this class name
+    //
+    // e.g. NSTypesetterControlCharacterAction -> NSTypesetter.NSTypesetterControlCharacterAction
+    //
+    if (namespaceEnums[owner->jsName]["_container"][typeStr].size()) {
+      typeStr = owner->jsName + "." + typeStr;
+    }
+    
+    output << typeStr;
   }
   
   string out = output.str();
@@ -1420,6 +1696,14 @@ string DefinitionWriter::write()
     }
   }
   
+  _buffer.clear();
+
+  for (::Meta::Meta* meta : _module.second) {
+    if (meta->is(Enum)) {
+      meta->visit(this);
+    }
+  }
+  
   for (::Meta::Meta* meta : _module.second) {
     if (!meta->is(Enum)) {
       if (JSExportDefinitionWriter::hiddenClasses.find(meta->jsName) == JSExportDefinitionWriter::hiddenClasses.end()) {
@@ -1431,8 +1715,11 @@ string DefinitionWriter::write()
   return _buffer.str();
 }
 
+// MARK: - Write Exports
+
 string DefinitionWriter::writeExports() {
   ostringstream output;
+  map<string, bool> writtenExports = {};
 
   output << "export {\n";
   
@@ -1441,20 +1728,52 @@ string DefinitionWriter::writeExports() {
   for (const auto& namespaceRecord : allNamespaces) {
     i++;
     
-    string renamedNamespaceName = MetaData::renamedName(namespaceRecord.first);
+    string namespaceName = renamedName(namespaceRecord.first);
     
-    bool hasDecls = namespaceEnums[renamedNamespaceName].size()
-      || structsMeta[renamedNamespaceName].size()
-      || namespaceVars[renamedNamespaceName].size()
-      || namespaceTypealiases[renamedNamespaceName].size()
-      || allClasses[renamedNamespaceName]
-      || allInterfaces[renamedNamespaceName];
+    vector<string> namespaceNameTokens;
+    StringUtils::split(namespaceName, '.', back_inserter(namespaceNameTokens));
     
-    if (!hasDecls || namespaceRecord.first == "NSNetService") {
+    if (namespaceNameTokens.size() == 2) {
+      namespaceName = namespaceNameTokens[0];
+    }
+    
+    bool hasDecls = namespaceEnums[namespaceName].size()
+      || namespaceEnums[namespaceName].size()
+      || namespaceVars[namespaceName].size()
+      || namespaceTypealiases[namespaceName].size()
+      || allClasses[namespaceName]
+      || allInterfaces[namespaceName];
+    
+    if (!hasDecls ||
+        namespaceName == "XMLNode.Options" ||
+        namespaceRecord.first == "NSNetService" ||
+        namespaceRecord.first == "runtime") {
       continue;
     }
-  
-    output << "  " << namespaceRecord.first;
+    
+    if (namespaceName.substr(0, 7) == "_global") {
+      continue;
+    }
+    
+    if (namespaceName == "Set" ||
+        namespaceName == "Array" ||
+        namespaceName == "String" ||
+        namespaceName == "NSObject") {
+      continue;
+    }
+
+    if (writtenExports[namespaceName]) {
+      continue;
+    }
+    
+    writtenExports[namespaceName] = true;
+    
+    if (namespaceName == "Date" || namespaceName == "Error") {
+      output << "  NS" << namespaceName << " as " << namespaceName;
+    }
+    else {
+      output << "  " << namespaceName;
+    }
     
     if (i < allNamespaces.size() - 2) {
       output << ",";
@@ -1465,17 +1784,19 @@ string DefinitionWriter::writeExports() {
   
   output << "};\n";
   
-  namespaceEnums.empty();
+  namespaceClasses.empty();
+//  namespaceEnums.empty();
   namespaceVars.empty();
   namespaceTypealiases.empty();
-  allNamespaces.empty();
+//  allNamespaces.empty();
   allClasses.empty();
   allInterfaces.empty();
   
-  namespaceEnums = {};
+  namespaceClasses = {};
+//  namespaceEnums = {};
   namespaceVars = {};
   namespaceTypealiases = {};
-  allNamespaces = {};
+//  allNamespaces = {};
   allClasses = {};
   allInterfaces = {};
   
@@ -1484,168 +1805,279 @@ string DefinitionWriter::writeExports() {
 
 string DefinitionWriter::writeNamespaces(bool writeToClasses)
 {
-  populateStructsMeta();
   populateTypealiases();
   
   ostringstream output;
 
-  for (const auto& namespaceRecord : allNamespaces) {
-    map<string, bool> writtenEnums = {};
+  map<string, bool> writtenEnums = {};
+  map<string, bool> writtenNamespaces = {};
 
-    string renamedNamespaceName = MetaData::renamedName(namespaceRecord.first);
-    bool hasDecls = namespaceEnums[renamedNamespaceName].size() ||
-      structsMeta[renamedNamespaceName].size() ||
-      namespaceVars[renamedNamespaceName].size() ||
-      namespaceTypealiases[renamedNamespaceName].size();
+  for (const auto& namespaceRecord : allNamespaces) {
+    string namespaceName = renamedName(namespaceRecord.first);
+
+    vector<string> namespaceNameTokens;
+    StringUtils::split(namespaceName, '.', back_inserter(namespaceNameTokens));
+    
+    if (namespaceNameTokens.size() == 2) {
+      namespaceName = namespaceNameTokens[0];
+    }
+
+    bool hasDecls = namespaceEnums[namespaceName].size() ||
+      namespaceClasses[namespaceName].size() ||
+      namespaceVars[namespaceName].size() ||
+      namespaceTypealiases[namespaceName].size();
     
     if (!hasDecls || namespaceRecord.first == "NSNetService") {
       continue;
     }
     
-    output << "namespace " << renamedNamespaceName << " {\n";
-    
-    // Namespace enums
-    
-    for (const auto& namespaceEnum : namespaceEnums[renamedNamespaceName]) {
-      // Enum values
-      vector<EnumField>& fields = namespaceEnum->swiftNameFields.size() != 0 ? namespaceEnum->swiftNameFields : namespaceEnum->fullNameFields;
-      string enumName = namespaceEnum->jsName;
-      
-      output << "  export enum " << enumName << " {\n";
-      
-      for (size_t i = 0; i < fields.size(); i++) {
-        output << "    " +  fields[i].name + " = " + fields[i].value;
-        
-        if (i < fields.size() - 1) {
-          output << ",";
-        }
-        
-        output << "\n";
-      }
-      
-      writtenEnums[enumName] = true;
-      
-      output << "  }\n\n";
-      
-      if (writeToClasses) {
-        output << "  " << "global['" << renamedNamespaceName << "']['" << enumName << "'] = " << enumName << ";\n\n";
-      }
-    }
-    
-    // Namespace vars
-
-    map<string, bool> writtenVars = {};
-
-    for (const auto& namespaceVar : namespaceVars[renamedNamespaceName]) {
-      string varName = sanitizeParameterName(namespaceVar->jsName);
-
-      if (writtenVars[varName]) {
-        continue;
-      }
-      
-      output << "  export let " << varName << ": " << jsifyTypeName(tsifyType(*namespaceVar->signature)) << ";\n";
-
-      writtenVars[varName] = true;
-    }
-    
-    // TODO: Namespace objc structs
-//    for (const auto& structMeta : objcStructs[namespaceName]) {
-//    }
-    
-    for (const auto& namespaceStruct : structsMeta[renamedNamespaceName]) {
-      string enumName = namespaceStruct.first;
-      
-      if (writtenEnums[enumName]) {
-        // Already written above
-        continue;
-      }
-      
-      output << "  // struct " << endl;
-      
-      auto values = namespaceStruct.second["values"].as<vector<string>>();
-      auto type = namespaceStruct.second["type"].as<string>();
-      auto valuesStr = StringUtils::join(values, ",\n    ");
-    
-      output << "  export enum " << enumName << " {\n";
-      output << "    " << valuesStr << endl;
-      output << "  }\n\n";
-    }
-    
-    // Namespace type aliases
-    
-    for (const auto& typeAliases : namespaceTypealiases[renamedNamespaceName]) {
-      output << "  export type " << typeAliases.first << " = " << jsifyTypeName(typeAliases.second) <<  ";\n";
-    }
-    
-    output << "}\n\n";
-  }
-
-  // Globals
-
-  for (const auto& structClass : structsMeta["_global"]) {
-    string structClassName = structClass.first;
-    
-    map<string, bool> previousNames = {};
-    
-    auto values = structClass.second["values"].as<vector<string>>();
-    
-    if (values.empty()) {
+    if (writtenNamespaces[namespaceName]) {
       continue;
     }
     
-    output << "export enum " << structClassName << " {\n";
+    writtenNamespaces[namespaceName] = true;
+
+    if (!writeToClasses) {
+      if (ignoredNamespaces.find(namespaceName) != ignoredNamespaces.end()) {
+        output << "// @ts-ignore\n";
+      }
+
+      output << "export namespace " << namespaceName << " {\n";
+    }
+
+    // MARK: - Namespace Classes
+
+    if (!writeToClasses) {
+      for (auto& namespaceClass : namespaceClasses[namespaceName]) {
+        // Indent properly
+        VueComponentFormatter::current.findAndReplaceIn2(namespaceClass, "\n", "\n  ");
+        // Remove last two spaces
+        namespaceClass.pop_back();
+        namespaceClass.pop_back();
+        
+        // Write out string we collected earlier when visiting interface
+        output << "  " << namespaceClass;
+      }
+    }
     
-    for (const auto& value : values) {
-      if (previousNames[value]) {
-        continue;
+    // MARK: - Namespace Enums
+    
+    if (writeToClasses && namespaceEnums[namespaceName].size()) {
+      output << "(globalThis as any)['" << namespaceName << "'] = (globalThis as any)['" << namespaceName << "'] || {};" << endl;
+    }
+
+    for (const auto& namespaceClass : namespaceEnums[namespaceName]) {
+      string className = namespaceClass.first;
+      bool isContainer = className == "_container";
+      const string SP = isContainer ? "" : "  ";
+
+      if (namespaceClass.second.size()) {
+        if (!writeToClasses && !isContainer) {
+          output << SP << "export namespace " << className << " {" << endl;
+        }
       }
       
-      previousNames[value] = true;
-      
-      output << "  " << value << ",\n";
-    }
-    
-    output << "}\n\n";
-    
-    if (writeToClasses) {
-      output << "global['" << structClassName << "'] = " << structClassName << ";\n\n";
-    }
-  }
-  
-  for (const auto& namespaceEnum : namespaceEnums["_global"]) {
-    // Enum values
-    vector<EnumField>& fields = namespaceEnum->swiftNameFields.size() != 0 ? namespaceEnum->swiftNameFields : namespaceEnum->fullNameFields;
-    string enumName = namespaceEnum->jsName;
-    
-    output << "export enum " << enumName << " {\n";
-    
-    for (size_t i = 0; i < fields.size(); i++) {
-      output << "  " +  fields[i].name + " = " + fields[i].value;
-      
-      if (i < fields.size() - 1) {
-        output << ",";
+      for (const auto& namespaceContainer : namespaceClass.second) {
+        string enumName = namespaceContainer.first;
+        if (writtenEnums[namespaceName + "." + className + "." + enumName]) {
+          continue;
+        }
+        
+        writtenEnums[namespaceName + "." + className + "." + enumName] = true;
+
+        if (!namespaceContainer.second.size()) {
+          continue;
+        }
+
+        if (writeToClasses) {
+          if (!isContainer) {
+            output << "(globalThis as any)['" << namespaceName << "']";
+            output << "['" << className << "']";
+            output << " = (globalThis as any)";
+            output << "['" << namespaceName << "']";
+            output << "['" << className << "']";
+            output << " || {};" << endl;
+          }
+
+          output << "(globalThis as any)['" << namespaceName << "']";
+          if (!isContainer) {
+            output << "['" << className << "']";
+          }
+          output << "['" << enumName << "']";
+
+          output << " = (globalThis as any)";
+          output << "['" << namespaceName << "']";
+
+          if (!isContainer) {
+            output << "['" << className << "']";
+          }
+          output << "['" << enumName << "']";
+          output << " || {};" << endl;
+        }
+
+        for (const auto& namespaceEnum : namespaceContainer.second) {
+          vector<EnumField>& fields = namespaceEnum->swiftNameFields.size() != 0 ? namespaceEnum->swiftNameFields : namespaceEnum->fullNameFields;
+
+          if (writeToClasses) {
+            output << "(globalThis as any)['" << namespaceName << "']";
+
+            if (!isContainer) {
+              output << "['" << className << "']";
+            }
+
+            output << "['" << enumName << "']";
+            output << " = {\n";
+
+            for (size_t i = 0; i < fields.size(); i++) {
+              output << "  " +  fields[i].name + ": " + fields[i].value;
+              if (i < fields.size() - 1) {
+                output << ",";
+              }
+              output << "\n";
+            }
+            output << "};\n\n";
+          }
+          else {
+            if (enumName == "dtdKind") {
+              enumName = "DTDKind";
+            }
+            output << SP << "  export enum " << enumName << " {\n";
+
+            for (size_t i = 0; i < fields.size(); i++) {
+              output << SP << "    " +  fields[i].name + " = " + fields[i].value;
+
+              if (i < fields.size() - 1) {
+                output << ",";
+              }
+
+              output << "\n";
+            }
+
+            output << SP << "  }" << endl;
+
+            if (isContainer) {
+              output << endl;
+            }
+          }
+
+          writtenEnums[namespaceName + "." + className + "." + enumName] = true;
+        }
       }
-      
-      output << "\n";
+
+      if (namespaceClass.second.size()) {
+        if (!writeToClasses && !isContainer) {
+          output << SP << "}" << endl << endl;
+        }
+      }
     }
-    
-    output << "}\n\n";
-    
-    if (writeToClasses) {
-      output << "global['" << enumName << "'] = " << enumName << ";\n\n";
+
+    if (!writeToClasses) {
+      output << "}" << endl;
     }
+
+    // MARK: - Namespace Vars
+    
+//
+//    map<string, bool> writtenVars = {};
+//
+//    for (const auto& namespaceVar : namespaceVars[namespaceName]) {
+//      string varName = sanitizeParameterName(namespaceVar->jsName);
+//
+//      if (writtenVars[varName]) {
+//        continue;
+//      }
+//
+//      output << "//  export let " << varName << ": " << jsifyTypeName(tsifyType(*namespaceVar->signature)) << ";\n";
+//
+//      writtenVars[varName] = true;
+//    }
+    
+    // MARK: - Namespace ObjC Structs
+    
+//    for (const auto& structMeta : objcStructs[namespaceName]) {
+//    }
+    
+    
+    // MARK: - Namespace Typealiases
+    
+//
+//    for (const auto& typeAliases : namespaceTypealiases[namespaceName]) {
+//      output << "  export type " << typeAliases.first << " = " << jsifyTypeName(typeAliases.second) <<  ";\n";
+//    }
+    
+    output << "\n";
   }
+
+  // MARK: - Global Structs
   
-  for (const auto& namespaceVar : namespaceVars["_global"]) {
-    string varName = sanitizeParameterName(namespaceVar->jsName);
-    
-    output << "// export let " << varName << ": " << jsifyTypeName(tsifyType(*namespaceVar->signature)) << ";\n";
-    
-    if (writeToClasses) {
-      output << "// global['" << varName << "'] = " << varName << ";\n\n";
-    }
-  }
+//
+//  for (const auto& structClass : structsMeta["_global"]) {
+//    string structClassName = structClass.first;
+//
+//    map<string, bool> previousNames = {};
+//
+//    auto values = structClass.second["values"].as<vector<string>>();
+//
+//    if (values.empty()) {
+//      continue;
+//    }
+//
+//    output << "export enum " << structClassName << " {\n";
+//
+//    for (const auto& value : values) {
+//      if (previousNames[value]) {
+//        continue;
+//      }
+//
+//      previousNames[value] = true;
+//
+//      output << "  " << value << ",\n";
+//    }
+//
+//    output << "}\n\n";
+//
+//    if (writeToClasses) {
+//      output << "global['" << structClassName << "'] = " << structClassName << ";\n\n";
+//    }
+//  }
+//
+//  MARK: - Global Enums
   
+//  for (const auto& namespaceEnum : namespaceEnums["_global"]) {
+//    // Enum values
+//    vector<EnumField>& fields = namespaceEnum->swiftNameFields.size() != 0 ? namespaceEnum->swiftNameFields : namespaceEnum->fullNameFields;
+//    string enumName = namespaceEnum->jsName;
+//
+//    output << "export enum " << enumName << " {\n";
+//
+//    for (size_t i = 0; i < fields.size(); i++) {
+//      output << "  " +  fields[i].name + " = " + fields[i].value;
+//
+//      if (i < fields.size() - 1) {
+//        output << ",";
+//      }
+//
+//      output << "\n";
+//    }
+//
+//    output << "}\n\n";
+//
+//    if (writeToClasses) {
+//      output << "global['" << enumName << "'] = " << enumName << ";\n\n";
+//    }
+//  }
+//
+//  MARK: - Global Vars
+  
+//  for (const auto& namespaceVar : namespaceVars["_global"]) {
+//    string varName = sanitizeParameterName(namespaceVar->jsName);
+//
+//    output << "// export let " << varName << ": " << jsifyTypeName(tsifyType(*namespaceVar->signature)) << ";\n";
+//
+//    if (writeToClasses) {
+//      output << "// global['" << varName << "'] = " << varName << ";\n\n";
+//    }
+//  }
 
   return output.str();
 }

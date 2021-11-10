@@ -25,7 +25,7 @@ public:
   std::string getInstanceParamsStr(MethodMeta* meta, BaseClassMeta* owner, bool forConstructor = false);
   std::string getTypeString(clang::ASTContext &Ctx, clang::Decl::ObjCDeclQualifier Quals, clang::QualType T, const Type& type, const bool isFuncParam = false);
   std::string vuePropifyTypeName(const std::string& jsName);
-  void findAndReplaceIn(std::string& str, std::string searchFor, std::string replaceBy);
+  void findAndReplaceIn2(std::string& str, std::string searchFor, std::string replaceBy);
 
 private:
 };

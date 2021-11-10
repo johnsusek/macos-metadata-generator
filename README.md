@@ -31,6 +31,6 @@ cd build/bin
 ./objc-metadata-generator -output-typescript ../../../data/types -output-jsexport ../../../data/jsexport -blacklist-modules-file ../../blacklist -whitelist-modules-file ../../whitelist Xclang -Wno-everything
 ```
 
-# Credits
+## Credits
 
 Based on [ios-metadata-generator](https://github.com/NativeScript/ios-metadata-generator).

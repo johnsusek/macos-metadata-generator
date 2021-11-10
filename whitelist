@@ -1,17 +1,8 @@
-CoreFoundation*
+ObjectiveC*
 Foundation*
-
-CoreAnimation*
-CoreMedia*
-CoreGraphics*
-CoreImage*
-CoreData*
-
-QuartzCore*
-Quartz*
-
-AVFoundation*
-AVKit*
-
 AppKit*
+Core*
+Quartz*
+AV*
+CloudKit*
 
