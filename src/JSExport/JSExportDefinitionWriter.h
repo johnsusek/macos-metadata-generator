@@ -80,7 +80,6 @@ private:
   
   static std::string getMethodReturnType(::Meta::MethodMeta* meta, ::Meta::BaseClassMeta* owner, size_t numArgs, const bool skipGenerics = false);
   static std::string writeSubclass(::Meta::InterfaceMeta* meta);
-  static bool isSubclassOf(std::string superclass, ::Meta::InterfaceMeta* meta);
   static std::string writeMethod(::Meta::MethodMeta* meta, ::Meta::BaseClassMeta* owner, std::string keyword = "", std::string metaJsName = "");
   static std::string writeMethod(CompoundMemberMap<::Meta::MethodMeta>::value_type& method, ::Meta::BaseClassMeta* owner,
                                  const std::unordered_set<::Meta::ProtocolMeta*>& protocols, std::string keyword = "", std::string metaJsName = "");

@@ -246,6 +246,15 @@ public:
         return std::string("[Name: '") + name + "', JsName: '" + jsName + "', Module: '" + ((module == nullptr) ? "" : module->getFullModuleName()) + "', File: '" + fileName + "']";
     }
   
+    std::string shortName() const
+    {
+      if (this->jsName == "IKImageView") {
+        return this->jsName;
+      }
+      std::regex frameworkPrefixes("^(NS|AV|IK)");
+      return regex_replace(this->jsName, frameworkPrefixes, "");
+    }
+  
     std::string kebabCase(std::string camelCase) const {
       std::string str(1, tolower(camelCase[0]));
 
@@ -361,7 +370,9 @@ public:
     InterfaceMeta* base;
 
     virtual void visit(MetaVisitor* visitor) override;
-    
+
+    bool isSubclassOf(std::string superclass);
+  
     bool nameExistsInSuperclass(std::string name, MetaType metaType) {
       bool stop = false;
       bool isInSuperclass = false;
@@ -372,15 +383,11 @@ public:
           if (metaType == Method) {
             for (MethodMeta* baseMethod : base->instanceMethods) {
               if (name == baseMethod->jsName) {
-                isInSuperclass = true;
-                stop = true;
                 return true;
               }
             }
             for (MethodMeta* baseMethod : base->staticMethods) {
               if (name == baseMethod->jsName) {
-                isInSuperclass = true;
-                stop = true;
                 return true;
               }
             }
@@ -389,15 +396,11 @@ public:
           if (metaType == Property) {
             for (PropertyMeta* baseProperty : base->instanceProperties) {
               if (name == baseProperty->jsName) {
-                isInSuperclass = true;
-                stop = true;
                 return true;
               }
             }
             for (PropertyMeta* baseProperty : base->staticProperties) {
               if (name == baseProperty->jsName) {
-                isInSuperclass = true;
-                stop = true;
                 return true;
               }
             }

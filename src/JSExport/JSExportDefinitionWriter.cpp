@@ -118,29 +118,6 @@ bool methodHasGenericParams(MethodMeta* method) {
   return hasGenericParams;
 }
 
-bool JSExportDefinitionWriter::isSubclassOf(string superclass, InterfaceMeta* meta) {
-  bool stop = false;
-  bool isSuperclass = false;
-  auto base = meta->base;
-
-  while (stop == false) {
-    if (base && base != NULL && base != nullptr) {
-      if (base->jsName == superclass) {
-        isSuperclass = true;
-        stop = true;
-      }
-      else {
-        base = base->base;
-      }
-    }
-    else {
-      stop = true;
-    }
-  }
-  
-  return isSuperclass;
-}
-
 void JSExportDefinitionWriter::getInheritedMembersRecursive(InterfaceMeta* interface,
                                                             CompoundMemberMap<MethodMeta>* staticMethods,
                                                             CompoundMemberMap<MethodMeta>* instanceMethods,
@@ -440,7 +417,7 @@ const char * viewOverrides = R"__literal(
   })__literal";
 
 void JSExportDefinitionWriter::writeExtension(string protocolName, InterfaceMeta* meta, CompoundMemberMap<MethodMeta>* staticMethods, CompoundMemberMap<MethodMeta>* instanceMethods) {
-  bool isViewSubclass = isSubclassOf("NSView", meta);
+  bool isViewSubclass = meta->isSubclassOf("NSView");
   
   if (isViewSubclass) {
     string viewName = meta->jsName.substr(2);
@@ -515,11 +492,9 @@ void JSExportDefinitionWriter::writeExtension(string protocolName, InterfaceMeta
       // instance inits don't work atm?
 //      writeCreate(method, owner);
     }
-    else if (methodHasGenericParams(method)) {
-      if (protocolName == "NSLayoutAnchor") {
-        cout << "Writing generic method " << method->name << endl;
+    else if (protocolName != "Set" && methodHasGenericParams(method)) {
+      if (protocolName == "NSLayoutAnchor" || protocolName == "NSLayoutConstraint") {
         writeMethodImpl(method, owner);
-        cout << "Wrote generic method " << method->name << endl;
       }
     }
   }
@@ -952,7 +927,7 @@ void JSExportDefinitionWriter::visit(InterfaceMeta* meta)
     // skip instance inits
     if (method->isInit()) {
       if (meta->jsName != "NSWindow") {
-        cout << "Skipping instance init " << method->name << endl;
+        cerr << "Skipping instance init " << method->name << endl;
         continue;
       }
     }
@@ -971,19 +946,21 @@ void JSExportDefinitionWriter::visit(InterfaceMeta* meta)
     
     auto interface = &meta->as<InterfaceMeta>();
 
-    if (isSubclassOf("NSControl", interface) &&
-        interface->nameExistsInSuperclass(property->jsName, Method)) {
-      cerr << "Skipping property that exists as method in " << interface->jsName << " superclass: `" << property->jsName << "`" << endl;
-      continue;
+    if (interface->isSubclassOf("NSControl")) {
+      if (interface->nameExistsInSuperclass(property->jsName, Method)) {
+        cerr << "Skipping property that exists as method in " << interface->jsName << " superclass: `" << property->jsName << "`" << endl;
+        continue;
+      }
+      
+      if (property->name == "selectedTag") {
+        continue;
+      }
+      
+      if (property->name == "selectedCell") {
+        continue;
+      }
     }
     
-    if (property->name == "selectedTag" && isSubclassOf("NSControl", interface)) {
-      continue;
-    }
-    if (property->name == "selectedCell" && isSubclassOf("NSControl", interface)) {
-      continue;
-    }
-
     auto decl = clang::dyn_cast<clang::ObjCPropertyDecl>(property->declaration);
     auto& first = *property->getter->signature[0];
     string returnType = Type::formatType(first, decl->getType());

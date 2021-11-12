@@ -366,6 +366,10 @@ string Type::formatTypeInterface(const Type& type, const clang::QualType pointer
       return out;
     }
     
+//    if (interfaceName != "Set" && interfaceType.hasClosedGenerics()) {
+//      cout << interfaceName << " has closed generics" << endl;
+//    }
+    
     if (interfaceName == "NSLayoutAnchor") {
       return "JSValue";
     }
@@ -632,6 +636,270 @@ string Type::formatType(const Type& type, const clang::QualType pointerType, con
   }
   
   return lookupApiNotes(typeStr);
+}
+
+string Type::writeFunctionProto(const vector<Type*>& signature)
+{
+  ostringstream output;
+  output << "(";
+  
+  for (size_t i = 1; i < signature.size(); i++) {
+    output << "p" << i << ": " << tsifyType(*signature[i]);
+    if (i < signature.size() - 1) {
+      output << ", ";
+    }
+  }
+  
+  output << ") => " << tsifyType(*signature[0]);
+  
+  return output.str();
+}
+
+string Type::tsifyType(const Type& type, const bool isFuncParam, const bool forComponent)
+{
+  string typeStr;
+  string enumModuleName;
+  
+  switch (type.getType()) {
+    case TypeVoid:
+      typeStr = "void";
+      break;
+    case TypeBool:
+      typeStr = "boolean";
+      break;
+    case TypeSignedChar:
+    case TypeUnsignedChar:
+    case TypeShort:
+    case TypeUShort:
+    case TypeInt:
+    case TypeUInt:
+    case TypeLong:
+    case TypeULong:
+    case TypeLongLong:
+    case TypeULongLong:
+    case TypeFloat:
+    case TypeDouble:
+      typeStr = "number";
+      break;
+    case TypeUnichar:
+    case TypeSelector:
+      typeStr = "string";
+      break;
+    case TypeCString: {
+      string res = "string";
+      if (isFuncParam) {
+        Type typeVoid(TypeVoid);
+        res += " | " + Type::nameForJSExport(Type::lookupApiNotes(tsifyType(::Meta::PointerType(&typeVoid), isFuncParam)));
+      }
+      typeStr = res;
+      break;
+    }
+    case TypeProtocol:
+      typeStr = "any /* Protocol */";
+      break;
+    case TypeClass:
+      typeStr = "typeof NSObject";
+      break;
+    case TypeId: {
+      const IdType& idType = type.as<IdType>();
+      if (idType.protocols.size() == 1 && idType.protocols[0]->jsName != "NSCopying") {
+        typeStr = idType.protocols[0]->jsName;
+      }
+      typeStr = "any";
+      break;
+    }
+    case TypeConstantArray:
+    case TypeExtVector:
+      //        typeStr = "interop.Reference<" + tsifyType(*type.as<ConstantArrayType>().innerType) + ">";
+      typeStr = Type::nameForJSExport(Type::lookupApiNotes(tsifyType(*type.as<ConstantArrayType>().innerType)));
+      break;
+    case TypeIncompleteArray:
+      //        typeStr = "interop.Reference<" + tsifyType(*type.as<IncompleteArrayType>().innerType) + ">";
+      typeStr = Type::nameForJSExport(Type::lookupApiNotes(tsifyType(*type.as<IncompleteArrayType>().innerType)));
+      break;
+    case TypePointer: {
+      const PointerType& pointerType = type.as<PointerType>();
+      typeStr = (pointerType.innerType->is(TypeVoid)) ? "any" : Type::nameForJSExport(Type::lookupApiNotes(tsifyType(*pointerType.innerType)));
+      break;
+    }
+    case TypeBlock:
+      return Type::nameForJSExport(Type::lookupApiNotes(writeFunctionProto(type.as<BlockType>().signature)));
+    case TypeFunctionPointer:
+      return Type::nameForJSExport(Type::lookupApiNotes(writeFunctionProto(type.as<FunctionPointerType>().signature)));
+    case TypeInterface:
+    case TypeBridgedInterface: {
+      if (type.is(TypeType::TypeBridgedInterface) && type.as<BridgedInterfaceType>().isId()) {
+        typeStr = Type::nameForJSExport(Type::lookupApiNotes(tsifyType(IdType())));
+        break;
+      }
+      
+      const InterfaceMeta& interface = type.is(TypeType::TypeInterface) ? *type.as<InterfaceType>().interface : *type.as<BridgedInterfaceType>().bridgedInterface;
+      const InterfaceType& interfaceType = type.as<InterfaceType>();
+      
+      if (interface.name == "NSNumber") {
+        typeStr = "number";
+        break;
+      }
+      else if (interface.name == "NSString") {
+        typeStr = "string";
+        break;
+      }
+      else if (interface.name == "NSDate") {
+        typeStr = "Date";
+        break;
+      }
+      
+      ostringstream output;
+      bool hasClosed = type.hasClosedGenerics();
+      string interfaceName = interface.jsName;
+      bool isDictionary = interface.name == "NSDictionary" || interface.name == "NSMutableDictionary";
+      bool isArray = interface.name == "NSArray" || interface.name == "NSMutableArray";
+      
+      if (isDictionary) {
+        interfaceName = "Map";
+      }
+      
+      if (isArray) {
+        if (hasClosed) {
+          string arrayType = tsifyType(*interfaceType.typeArguments[0]);
+          output << renamedName(arrayType) << "[]";
+        }
+        else {
+          output << "any[]";
+        }
+      }
+      else if (hasClosed) {
+        output << interfaceName;
+        if (interfaceType.typeArguments.size() == 2) {
+          output << "<";
+          output << tsifyType(*interfaceType.typeArguments[0]);
+          output << ", ";
+          output << tsifyType(*interfaceType.typeArguments[1]);
+          output << ">";
+        }
+        else {
+          output << "<any>";
+        }
+      }
+      else {
+        output << interfaceName;
+        
+        // This also translates CFArray to NSArray<any>
+        if (auto typeParamList = clang::dyn_cast<clang::ObjCInterfaceDecl>(interface.declaration)->getTypeParamListAsWritten()) {
+          output << "<";
+          for (size_t i = 0; i < typeParamList->size(); i++) {
+            output << "any";
+            if (i < typeParamList->size() - 1) {
+              output << ", ";
+            }
+          }
+          output << ">";
+        }
+      }
+      
+      typeStr = output.str();
+      
+      break;
+    }
+    case TypeStruct: {
+      const StructType& structType = type.as<StructType>();
+      typeStr = structType.structMeta->jsName;
+      break;
+    }
+    case TypeUnion:
+      typeStr = (*type.as<UnionType>().unionMeta).jsName;
+      break;
+    case TypeAnonymousStruct:
+    case TypeAnonymousUnion: {
+      ostringstream output;
+      output << "{ ";
+      const vector<RecordField>& fields = type.as<AnonymousStructType>().fields;
+      for (auto& field : fields) {
+        output << Type::nameForJSExport(Type::lookupApiNotes(field.name)) << ": " << Type::nameForJSExport(Type::lookupApiNotes(tsifyType(*field.encoding))) << "; ";
+      }
+      output << "}";
+      typeStr = output.str();
+      break;
+    }
+    case TypeEnum: {
+      const EnumType& enumType = type.as<EnumType>();
+      enumModuleName = renamedName(enumType.enumMeta->module->Name);
+      typeStr = enumType.enumMeta->jsName;
+      break;
+    }
+    case TypeTypeArgument:
+      typeStr = Type::nameForJSExport(Type::lookupApiNotes(type.as<TypeArgumentType>().name));
+      break;
+    case TypeVaList:
+    case TypeInstancetype:
+    default:
+      break;
+  }
+  
+  string typeName = renamedName(typeStr);
+  string containerName = "_container";
+  string moduleName = "_container";
+  
+  vector<string> typeNameTokens;
+  StringUtils::split(typeStr, '.', back_inserter(typeNameTokens));
+  
+  if (typeNameTokens.size() == 1) {
+    typeName = renamedName(typeNameTokens[0]);
+  }
+  else if (typeNameTokens.size() == 2) {
+    containerName = renamedName(typeNameTokens[0]);
+    typeName = renamedName(typeNameTokens[1]);
+  }
+  
+  string renamedTypeContainer = renamedName(containerName);
+  vector<string> renamedTypeContainerTokens;
+  StringUtils::split(renamedTypeContainer, '.', back_inserter(renamedTypeContainerTokens));
+  
+  if (renamedTypeContainerTokens.size() == 1) {
+    containerName = renamedName(renamedTypeContainerTokens[0]);
+  }
+  else if (renamedTypeContainerTokens.size() == 2) {
+    moduleName = renamedName(renamedTypeContainerTokens[0]);
+    containerName = renamedName(renamedTypeContainerTokens[1]);
+  }
+  
+  string renamedTypeName = renamedName(typeName);
+  vector<string> renamedTypeNameTokens;
+  StringUtils::split(renamedTypeName, '.', back_inserter(renamedTypeNameTokens));
+  
+  if (renamedTypeNameTokens.size() == 1) {
+    typeName = renamedName(renamedTypeNameTokens[0]);
+  }
+  else if (renamedTypeNameTokens.size() == 2) {
+    moduleName = renamedName(renamedTypeNameTokens[0]);
+    containerName = renamedName(renamedTypeNameTokens[1]);
+  }
+  
+  if (moduleName == "_container" && containerName == "_container") {
+    if (enumModuleName.empty()) {
+      return typeName;
+    }
+    else {
+      return enumModuleName + "." + typeName;
+    }
+  }
+  
+  if (moduleName == "_container") {
+    if (!enumModuleName.empty() &&
+        enumModuleName != containerName &&
+        enumModuleName != containerName + "." + typeName) {
+      return enumModuleName + "." + containerName + "." + typeName;
+    }
+    else {
+      return containerName + "." + typeName;
+    }
+  }
+  
+  if (containerName == "_container") {
+    return moduleName + "." + typeName;
+  }
+  
+  return moduleName + "." + containerName + "." + typeName;
 }
 
 // NSView<NSCollectionViewElement>

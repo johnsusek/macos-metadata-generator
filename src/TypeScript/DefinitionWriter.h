@@ -17,7 +17,7 @@ public:
     {
     }
 
-    std::string write();
+    std::string visitAll();
     
     static std::string writeNamespaces(bool writeToClasses = false);
 
@@ -71,8 +71,6 @@ private:
     static std::string writeMethod(CompoundMemberMap<Meta::MethodMeta>::value_type& method, Meta::BaseClassMeta* owner,
         const std::unordered_set<Meta::ProtocolMeta*>& protocols, bool canUseThisType = false);
     static std::string writeProperty(Meta::PropertyMeta* meta, Meta::BaseClassMeta* owner, bool optOutTypeChecking);
-    static std::string writeFunctionProto(const std::vector<Meta::Type*>& signature);
-    static std::string tsifyType(const Meta::Type& type, const bool isParam = false);
     static std::string computeMethodReturnType(const Meta::Type* retType, const Meta::BaseClassMeta* owner, bool canUseThisType = false);
     std::string getTypeArgumentsStringOrEmpty(const clang::ObjCObjectType* objectType);
     static std::string formatType(const Meta::Type& type, const clang::QualType pointerType, const bool ignorePointerType = false);
@@ -87,7 +85,7 @@ private:
   
 //    static void populateStructsMeta();
   
-    static std::string jsifyTypeName(const std::string& jsName);
+    static std::string jsifySwiftTypeName(const std::string& jsName);
 
     std::pair<clang::Module*, std::vector<Meta::Meta*> >& _module;
     Meta::TypeFactory& _typeFactory;

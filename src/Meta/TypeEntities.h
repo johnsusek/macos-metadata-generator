@@ -80,6 +80,10 @@ public:
     static std::string formatTypePointer(const ::Meta::PointerType& pointerType, const clang::QualType pointerQualType, const bool ignorePointerType = false);
     static std::string formatTypeInterface(const ::Meta::Type& type, const clang::QualType pointerType, const bool ignorePointerType = false);
     static std::string formatTypeAnonymous(const ::Meta::Type& type, const clang::QualType pointerType);
+    
+    static std::string tsifyType(const Type& type, const bool isFuncParam = false, const bool forComponent = false);
+    static std::string writeFunctionProto(const std::vector<Meta::Type*>& signature);
+
     static void stripModifiersFromPointerType(std::string& name);
     static void findAndReplaceIn(std::string& str, std::string searchFor, std::string replaceBy);
     static bool populateModule(std::string moduleName);

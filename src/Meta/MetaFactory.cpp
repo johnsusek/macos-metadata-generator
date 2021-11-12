@@ -689,6 +689,11 @@ void MetaFactory::populateIdentificationFields(const clang::NamedDecl& decl, Met
       const clang::TagDecl* tagDecl = clang::dyn_cast<clang::TagDecl>(&decl);
       meta.name = meta.jsName = getTypedefOrOwnName(tagDecl);
       nameKey = meta.jsName;
+      if (meta.jsName == "NSImageScaling") {
+        cout << "";
+      }
+      
+
       break;
     }
     default:
@@ -707,7 +712,9 @@ void MetaFactory::populateIdentificationFields(const clang::NamedDecl& decl, Met
     selector = renamed;
 
     vector<string> nameParts = selectorParts(selector);
-    meta.jsName = nameParts[0];
+    if (nameParts[0] != "String") {
+      meta.jsName = nameParts[0];
+    }
     nameParts.erase(nameParts.begin());
     meta.argLabels = nameParts;
   }

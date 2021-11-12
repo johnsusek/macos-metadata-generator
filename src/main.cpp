@@ -122,82 +122,92 @@ public:
       string docSetPath = cla_docSetFile.empty() ? "" : cla_docSetFile.getValue();
 
       for (pair<clang::Module*, vector<Meta::Meta*> >& modulePair : metasByModules) {
-        cout << modulePair.first->Name << "... ";
+        cout<< "[JSExport] " << modulePair.first->Name << "... ";
         TypeScript::JSExportDefinitionWriter jsDefinitionWriter(modulePair, _visitor.getMetaFactory().getTypeFactory(), docSetPath);
         jsDefinitionWriter.write();
         cout << std::to_string(modulePair.second.size()) << " done" << endl;
       }
+      
+      cout << endl;
     }
 
     // Generate component definitions
-//    if (!cla_outputVueFolder.empty()) {
-//      llvm::sys::fs::create_directories(cla_outputVueFolder);
-//      string docSetPath = cla_docSetFile.empty() ? "" : cla_docSetFile.getValue();
-//
-//      for (pair<clang::Module*, vector<Meta::Meta*> >& modulePair : metasByModules) {
-//        TypeScript::VueComponentDefinitionWriter vueDefinitionWriter(modulePair, _visitor.getMetaFactory().getTypeFactory(), docSetPath);
-//        vueDefinitionWriter.write();
-//      }
-//    }
+    if (!cla_outputVueFolder.empty()) {
+      llvm::sys::fs::create_directories(cla_outputVueFolder);
+      string docSetPath = cla_docSetFile.empty() ? "" : cla_docSetFile.getValue();
+
+      cout << "Generating Vue components..." << endl;
+
+      for (pair<clang::Module*, vector<Meta::Meta*> >& modulePair : metasByModules) {
+        cout << "[Vue] " << modulePair.first->Name << "... ";
+        TypeScript::VueComponentDefinitionWriter vueDefinitionWriter(modulePair, _visitor.getMetaFactory().getTypeFactory(), docSetPath);
+        vueDefinitionWriter.write();
+        cout << std::to_string(modulePair.second.size()) << " done" << endl;
+      }
+    }
 
     // Generate TypeScript definitions
-//    if (!cla_outputDtsFolder.empty()) {
-//      ostringstream output;
-//
-//      llvm::sys::fs::create_directories(cla_outputDtsFolder);
-//      string docSetPath = cla_docSetFile.empty() ? "" : cla_docSetFile.getValue();
-//
-//      llvm::SmallString<128> path;
-//      llvm::sys::path::append(path, cla_outputDtsFolder, "MacOS.ts");
-//      error_code error;
-//      llvm::raw_fd_ostream file(path.str(), error, llvm::sys::fs::F_Text);
-//
-//      if (error) {
-//        cout << error.message();
-//        return;
-//      }
-//
-//      cout << "Generating TypeScript definitions for MacOS..." << endl;
-//
-//      output << "/* eslint-disable */\n\n";
-//
-//      // These are all inside a declare block, so they are invisible
-//      // and runtime, we add the enums to the bridges classes later
-//
-//      output << "declare global {\n\n";
-//
-//      for (pair<clang::Module*, vector<Meta::Meta*> >& modulePair : metasByModules) {
-//        TypeScript::DefinitionWriter definitionWriter(modulePair, _visitor.getMetaFactory().getTypeFactory(), docSetPath);
-//        output << definitionWriter.write();
-//      }
-//
-//      const char * namespaceFills = R"__literal(namespace AE {
-//      export enum AEDataModel { }
-//      })__literal";
-//
-//      output << namespaceFills << endl;
-//
-//      output << TypeScript::DefinitionWriter::writeNamespaces();
-//
-//      output << "}\n\n";
-//
-//      output << "// Add enums to the already-existing bridged classes\n";
-//      output << "//\n";
-//      output << "// If we didn't do this, these would be duplicated\n";
-//      output << "// (i.e. both NSButton and NSButton$1 would exist\n";
-//      output << "// in global scope)\n\n";
-//
-//      output << "let global = globalThis as any;\n\n";
-//
-//      output << TypeScript::DefinitionWriter::writeNamespaces(true);
-//
-//      output << TypeScript::DefinitionWriter::writeExports();
-//
-//      file << output.str();
-//      file.close();
-//
-//      cout << "Wrote " << path.c_str() << endl;
-//    }
+    if (!cla_outputDtsFolder.empty()) {
+      ostringstream output;
+
+      llvm::sys::fs::create_directories(cla_outputDtsFolder);
+      string docSetPath = cla_docSetFile.empty() ? "" : cla_docSetFile.getValue();
+
+      llvm::SmallString<128> path;
+      llvm::sys::path::append(path, cla_outputDtsFolder, "MacOS.ts");
+      error_code error;
+      llvm::raw_fd_ostream file(path.str(), error, llvm::sys::fs::F_Text);
+
+      if (error) {
+        cout << error.message();
+        return;
+      }
+
+      cout << "Generating TypeScript definitions..." << endl;
+
+      output << "/* eslint-disable */\n\n";
+
+      // These are all inside a declare block, so they are invisible
+      // and runtime, we add the enums to the bridges classes later
+
+      output << "declare global {\n\n";
+
+      for (pair<clang::Module*, vector<Meta::Meta*> >& modulePair : metasByModules) {
+        cout << "[Typescript] " << modulePair.first->Name << "... ";
+        TypeScript::DefinitionWriter definitionWriter(modulePair, _visitor.getMetaFactory().getTypeFactory(), docSetPath);
+        output << definitionWriter.visitAll();
+        cout << std::to_string(modulePair.second.size()) << " done" << endl;
+      }
+      
+      cout << endl;
+
+      const char * namespaceFills = R"__literal(namespace AE {
+      export enum AEDataModel { }
+      })__literal";
+
+      output << namespaceFills << endl;
+
+      output << TypeScript::DefinitionWriter::writeNamespaces();
+
+      output << "}\n\n";
+
+      output << "// Add enums to the already-existing bridged classes\n";
+      output << "//\n";
+      output << "// If we didn't do this, these would be duplicated\n";
+      output << "// (i.e. both NSButton and NSButton$1 would exist\n";
+      output << "// in global scope)\n\n";
+
+      output << "let global = globalThis as any;\n\n";
+
+      output << TypeScript::DefinitionWriter::writeNamespaces(true);
+
+      output << TypeScript::DefinitionWriter::writeExports();
+
+      file << output.str();
+      file.close();
+
+      cout << "Wrote " << path.c_str() << endl << endl;
+    }
   }
 
 private:

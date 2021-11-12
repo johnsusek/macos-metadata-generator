@@ -51,6 +51,12 @@ string kebabCase(string camelCase) {
   return str;
 }
 
+inline bool endsWith(string const & value, string const & ending)
+{
+  if (ending.size() > value.size()) return false;
+  return equal(ending.rbegin(), ending.rend(), value.rbegin());
+}
+
 string getPropsEntry(string returnType, PropertyMeta* meta = NULL) {
   ostringstream output;
   
@@ -74,222 +80,9 @@ string getPropsEntry(string returnType, PropertyMeta* meta = NULL) {
   return output.str();
 }
 
-bool VueComponentDefinitionWriter::isSubclassOf(string superclass, InterfaceMeta* meta) {
-  bool stop = false;
-  bool isSuperclass = false;
-  auto base = meta->base;
-  
-  while (stop == false) {
-    if (base && base != NULL && base != nullptr) {
-      if (base->jsName == superclass) {
-        isSuperclass = true;
-        stop = true;
-      }
-      else {
-        base = base->base;
-      }
-    }
-    else {
-      stop = true;
-    }
-  }
-  
-  return isSuperclass;
-}
+// MARK: - Visit
 
-string VueComponentDefinitionWriter::writeMethod(MethodMeta* method, BaseClassMeta* owner, string keyword)
-{
-  ostringstream output;
-  
-  const clang::ObjCMethodDecl& methodDecl = *clang::dyn_cast<clang::ObjCMethodDecl>(method->declaration);
-  
-  string name = method->jsName;
-  
-  if (!keyword.empty()) {
-    cout << "Skipping prop " + name + " because it has a keyword " + keyword << endl;
-    return output.str();
-  }
-  
-  // We are only interested in setters (w/ single param)
-  // when writing methods for Vue components
-  if (name.substr(0, 3) != "set" || method->signature.size() != 2 || name == "set") {
-    return output.str();
-  }
-  
-  string nameWithoutSet = name.substr(3);
-  nameWithoutSet[0] = tolower(nameWithoutSet[0]);
-  
-  string kebabName = kebabCase(nameWithoutSet);
-  
-  if (writtenProps.find(kebabName) != writtenProps.end()) {
-    return output.str();
-  }
-  
-  writtenProps.insert(kebabName);
-  
-  output << "  '" << kebabName << "': {\n";
-  
-  string setterType = VueComponentFormatter::current.getTypeString(methodDecl.getASTContext(), methodDecl.getObjCDeclQualifier(), methodDecl.getReturnType(), *method->signature[1], false);
-  
-  setterType = VueComponentFormatter::current.vuePropifyTypeName(setterType);
-  
-  output << "      ";
-  
-  output << getPropsEntry(setterType) << ",\n";
-  
-  output << "      ";
-  
-  output << "default: () => undefined\n";
-  
-  output << "    },\n";
-  
-  return output.str();
-}
-
-string VueComponentDefinitionWriter::writeMethod(CompoundMemberMap<MethodMeta>::value_type& methodPair, BaseClassMeta* owner, const unordered_set<ProtocolMeta*>& protocols, string keyword)
-{
-  string output;
-  
-  BaseClassMeta* memberOwner = methodPair.second.first;
-  MethodMeta* method = methodPair.second.second;
-  
-  if (hiddenMethods.find(method->jsName) != hiddenMethods.end()) {
-    return string();
-  }
-  
-  bool isOwnMethod = memberOwner == owner;
-  bool implementsProtocol = protocols.find(static_cast<ProtocolMeta*>(memberOwner)) != protocols.end();
-  bool returnsInstanceType = method->signature[0]->is(TypeInstancetype);
-  
-  if (isOwnMethod || implementsProtocol || returnsInstanceType) {
-    output = writeMethod(method, owner, keyword);
-  }
-  
-  return output;
-}
-
-string VueComponentDefinitionWriter::writeMethodComputed(MethodMeta* method, BaseClassMeta* owner)
-{
-  ostringstream output;
-  const clang::ObjCMethodDecl& methodDecl = *clang::dyn_cast<clang::ObjCMethodDecl>(method->declaration);
-  string name = method->jsName;
-  
-  // We are only interested in setters (w/ single param)
-  // when writing methods for Vue components
-  if (name.substr(0, 3) != "set" || method->signature.size() != 2 || name == "set") {
-    return output.str();
-  }
-  
-  string nameWithoutSet = name.substr(3);
-  nameWithoutSet[0] = tolower(nameWithoutSet[0]);
-  
-  string kebabName = kebabCase(nameWithoutSet);
-  string setterType = VueComponentFormatter::current.getTypeString(methodDecl.getASTContext(), methodDecl.getObjCDeclQualifier(), methodDecl.getReturnType(), *method->signature[1], false);
-  setterType = VueComponentFormatter::current.vuePropifyTypeName(setterType);
-  
-  // Native types like String and Number don't get any special treatment
-  if (VueComponentFormatter::nativeTypes[setterType]) {
-    return output.str();
-  }
-  
-  if (method && method->signature[1]->getType() == TypeEnum) {
-    // convert prop string to enum value
-//    output << "      if (this." << nameWithoutSet << " !== undefined) {\n";
-//    output << "        attrs." << nameWithoutSet << " = " << setterType << "[this." << nameWithoutSet << "];\n";
-//    output << "      }\n\n";
-    output << "        " << nameWithoutSet << ": " << setterType << ",\n";
-  }
-  
-  return output.str();
-}
-
-void VueComponentDefinitionWriter::writeProperty(PropertyMeta* propertyMeta, BaseClassMeta* owner, InterfaceMeta* target, CompoundMemberMap<PropertyMeta> baseClassProperties)
-{
-  if (hiddenMethods.find(propertyMeta->jsName) != hiddenMethods.end()) {
-    return;
-  }
-  
-  const clang::ObjCPropertyDecl& propDecl = *clang::dyn_cast<clang::ObjCPropertyDecl>(propertyMeta->declaration);
-  
-  if (propDecl.isClassProperty()) {
-    return;
-  }
-  
-  bool optOutTypeChecking = false;
-  auto result = baseClassProperties.find(propertyMeta->jsName);
-  
-  if (result != baseClassProperties.end()) {
-    optOutTypeChecking = result->second.second->getter->signature[0] != propertyMeta->getter->signature[0];
-  }
-  
-  _buffer << writeProperty(propertyMeta, target, optOutTypeChecking);
-}
-
-inline bool endsWith(string const & value, string const & ending)
-{
-  if (ending.size() > value.size()) return false;
-  return equal(ending.rbegin(), ending.rend(), value.rbegin());
-}
-
-string VueComponentDefinitionWriter::writeProperty(PropertyMeta* meta, BaseClassMeta* owner, bool optOutTypeChecking)
-{
-  ostringstream output;
-  
-  if (!meta->setter) {
-    return output.str();
-  }
-  
-  string name = kebabCase(meta->jsName);
-  
-  writtenProps.insert(name);
-  
-  auto decl = clang::dyn_cast<clang::ObjCPropertyDecl>(meta->declaration);
-  string returnType = VueComponentFormatter::current.formatType(*meta->getter->signature[0], decl->getType());
-  returnType = VueComponentFormatter::current.vuePropifyTypeName(returnType);
-  
-  output << "    '" << name << "': {\n";
-  output << "      ";
-  output << getPropsEntry(returnType, meta) << ",\n";
-  output << "      ";
-  output << "default: () => undefined\n";
-  output << "    },\n";
-
-  return output.str();
-}
-
-string VueComponentDefinitionWriter::writePropertyComputed(PropertyMeta* meta, BaseClassMeta* owner)
-{
-  ostringstream output;
-  
-  // Can't set a value on read-only properties
-  if (!meta->setter) {
-    return output.str();
-  }
-  
-  auto decl = clang::dyn_cast<clang::ObjCPropertyDecl>(meta->declaration);
-  string propertyType = VueComponentFormatter::current.formatType(*meta->getter->signature[0], decl->getType());
-  propertyType = VueComponentFormatter::current.vuePropifyTypeName(propertyType);
-  
-  string name = meta->jsName;
-  string kebabName = kebabCase(meta->jsName);
-
-  // Native types like String and Number don't get any special treatment
-  if (VueComponentFormatter::nativeTypes[propertyType]) {
-    return output.str();
-  }
-  
-  if (meta && meta->getter->signature[0]->getType() == TypeEnum) {
-    // convert prop string to enum value
-//    output << "      if (this." << name << " !== undefined) {\n";
-//    output << "        attrs." << name << " = " << propertyType << "[this." << name << "];\n";
-//    output << "      }\n\n";
-    output << "        " << name << ": " << propertyType << ",\n";
-  }
-  
-  return output.str();
-}
-
-// MARK: - Visit Interface
+// MARK: Interface
 
 void VueComponentDefinitionWriter::visit(InterfaceMeta* meta)
 {
@@ -406,7 +199,6 @@ void VueComponentDefinitionWriter::visit(InterfaceMeta* meta)
     }
   }
   
-
   for (auto& methodPair : compoundInstanceMethods) {
     if (ownInstanceProperties.find(methodPair.first) != ownInstanceProperties.end()) {
       continue;
@@ -418,7 +210,6 @@ void VueComponentDefinitionWriter::visit(InterfaceMeta* meta)
     if (method->getFlags(MethodIsInitializer)) {
       continue;
     }
-    
 
     string output = writeMethodComputed(method, owner);
     
@@ -497,6 +288,225 @@ void VueComponentDefinitionWriter::visit(EnumConstantMeta* meta)
 {
 }
 
+// MARK: - Write
+
+string VueComponentDefinitionWriter::writeMethod(CompoundMemberMap<MethodMeta>::value_type& methodPair, BaseClassMeta* owner, const unordered_set<ProtocolMeta*>& protocols, string keyword)
+{
+  string output;
+  
+  BaseClassMeta* memberOwner = methodPair.second.first;
+  MethodMeta* method = methodPair.second.second;
+  
+  if (hiddenMethods.find(method->jsName) != hiddenMethods.end()) {
+    return string();
+  }
+  
+  bool isOwnMethod = memberOwner == owner;
+  bool implementsProtocol = protocols.find(static_cast<ProtocolMeta*>(memberOwner)) != protocols.end();
+  bool returnsInstanceType = method->signature[0]->is(TypeInstancetype);
+  
+  if (isOwnMethod || implementsProtocol || returnsInstanceType) {
+    output = writeMethod(method, owner, keyword);
+  }
+  
+  return output;
+}
+
+string VueComponentDefinitionWriter::writeMethod(MethodMeta* method, BaseClassMeta* owner, string keyword)
+{
+  ostringstream output;
+  
+  const clang::ObjCMethodDecl& methodDecl = *clang::dyn_cast<clang::ObjCMethodDecl>(method->declaration);
+  
+  string name = method->jsName;
+  
+  if (!keyword.empty()) {
+    cout << "Skipping prop " + name + " because it has a keyword " + keyword << endl;
+    return output.str();
+  }
+  
+  // We are only interested in setters (w/ single param)
+  // when writing methods for Vue components
+  if (name.substr(0, 3) != "set" || method->signature.size() != 2 || name == "set") {
+    return output.str();
+  }
+  
+  string nameWithoutSet = name.substr(3);
+  nameWithoutSet[0] = tolower(nameWithoutSet[0]);
+  
+  string kebabName = kebabCase(nameWithoutSet);
+  
+  if (writtenProps.find(kebabName) != writtenProps.end()) {
+    return output.str();
+  }
+  
+  writtenProps.insert(kebabName);
+  
+  output << "  '" << kebabName << "': {\n";
+  
+  string setterType = VueComponentFormatter::current.getTypeString(methodDecl.getASTContext(), methodDecl.getObjCDeclQualifier(), methodDecl.getReturnType(), *method->signature[1], false);
+  
+  setterType = VueComponentFormatter::current.vuePropifyTypeName(setterType);
+  
+  output << "      ";
+  
+  output << getPropsEntry(setterType) << ",\n";
+  
+  output << "      ";
+  
+  output << "default: () => undefined\n";
+  
+  output << "    },\n";
+  
+  return output.str();
+}
+
+string VueComponentDefinitionWriter::writeMethodComputed(MethodMeta* method, BaseClassMeta* owner)
+{
+  ostringstream output;
+  const clang::ObjCMethodDecl& methodDecl = *clang::dyn_cast<clang::ObjCMethodDecl>(method->declaration);
+  string name = method->jsName;
+  
+  // We are only interested in setters (w/ single param)
+  // when writing methods for Vue components
+  if (name.substr(0, 3) != "set" || method->signature.size() != 2 || name == "set") {
+    return output.str();
+  }
+  
+  string nameWithoutSet = name.substr(3);
+  nameWithoutSet[0] = tolower(nameWithoutSet[0]);
+  
+  string kebabName = kebabCase(nameWithoutSet);
+  string setterType = VueComponentFormatter::current.getTypeString(methodDecl.getASTContext(), methodDecl.getObjCDeclQualifier(), methodDecl.getReturnType(), *method->signature[1], false);
+  setterType = VueComponentFormatter::current.vuePropifyTypeName(setterType);
+  
+  // Native types like String and Number don't get any special treatment
+  if (VueComponentFormatter::nativeTypes[setterType]) {
+    return output.str();
+  }
+  
+  if (method && method->signature[1]->getType() == TypeEnum) {
+    // convert prop string to enum value
+    //    output << "      if (this." << nameWithoutSet << " !== undefined) {\n";
+    //    output << "        attrs." << nameWithoutSet << " = " << setterType << "[this." << nameWithoutSet << "];\n";
+    //    output << "      }\n\n";
+    output << "        " << nameWithoutSet << ": " << setterType << ",\n";
+  }
+  
+  return output.str();
+}
+
+void VueComponentDefinitionWriter::writeProperty(PropertyMeta* propertyMeta, BaseClassMeta* owner, InterfaceMeta* target, CompoundMemberMap<PropertyMeta> baseClassProperties)
+{
+  if (hiddenMethods.find(propertyMeta->jsName) != hiddenMethods.end()) {
+    return;
+  }
+  
+  const clang::ObjCPropertyDecl& propDecl = *clang::dyn_cast<clang::ObjCPropertyDecl>(propertyMeta->declaration);
+  
+  if (propDecl.isClassProperty()) {
+    return;
+  }
+  
+  bool optOutTypeChecking = false;
+  auto result = baseClassProperties.find(propertyMeta->jsName);
+  
+  if (result != baseClassProperties.end()) {
+    optOutTypeChecking = result->second.second->getter->signature[0] != propertyMeta->getter->signature[0];
+  }
+  
+  _buffer << writeProperty(propertyMeta, target, optOutTypeChecking);
+}
+
+string VueComponentDefinitionWriter::writeProperty(PropertyMeta* meta, BaseClassMeta* owner, bool optOutTypeChecking)
+{
+  ostringstream output;
+  
+  if (!meta->setter) {
+    return output.str();
+  }
+  
+  string name = kebabCase(meta->jsName);
+  
+  writtenProps.insert(name);
+  
+  auto decl = clang::dyn_cast<clang::ObjCPropertyDecl>(meta->declaration);
+
+  string returnType = VueComponentFormatter::current.formatType(*meta->getter->signature[0], decl->getType());
+  returnType = VueComponentFormatter::current.vuePropifyTypeName(returnType);
+
+  string retType2 = Type::tsifyType(*meta->getter->signature[0], false, true);
+  
+  retType2 = VueComponentFormatter::current.vuePropifyTypeName(retType2);
+  retType2[0] = toupper(retType2[0]);
+
+
+  if (retType2 != returnType && retType2 != "any" && returnType != "JSManagedValue" && retType2 != "String") {
+    if (retType2 == "Any" && returnType != "any") {
+      
+    }
+    else {
+      cout << "Using " << retType2 << " instead of " << returnType << endl;
+      returnType = retType2;
+    }
+  }
+  
+  output << "    '" << name << "': {\n";
+  output << "      ";
+  output << getPropsEntry(returnType, meta) << ",\n";
+  output << "      ";
+  output << "default: () => undefined\n";
+  output << "    },\n";
+  
+  return output.str();
+}
+
+string VueComponentDefinitionWriter::writePropertyComputed(PropertyMeta* meta, BaseClassMeta* owner)
+{
+  ostringstream output;
+  
+  // Can't set a value on read-only properties
+  if (!meta->setter) {
+    return output.str();
+  }
+  
+  auto decl = clang::dyn_cast<clang::ObjCPropertyDecl>(meta->declaration);
+  string propertyType = VueComponentFormatter::current.formatType(*meta->getter->signature[0], decl->getType());
+  propertyType = VueComponentFormatter::current.vuePropifyTypeName(propertyType);
+  
+  string retType2 = Type::tsifyType(*meta->getter->signature[0], false, true);
+  retType2 = VueComponentFormatter::current.vuePropifyTypeName(retType2);
+  retType2[0] = toupper(retType2[0]);
+
+  if (retType2 != propertyType && retType2 != "any" && propertyType != "JSManagedValue" && retType2 != "String") {
+    if (retType2 == "Any" && propertyType != "any") {
+      
+    }
+    else {
+      cout << "Using " << retType2 << " instead of " << propertyType << endl;
+      propertyType = retType2;
+    }
+  }
+
+  string name = meta->jsName;
+  string kebabName = kebabCase(meta->jsName);
+  
+  // Native types like String and Number don't get any special treatment
+  if (VueComponentFormatter::nativeTypes[propertyType]) {
+    return output.str();
+  }
+  
+  if (meta && meta->getter->signature[0]->getType() == TypeEnum) {
+    // convert prop string to enum value
+    //    output << "      if (this." << name << " !== undefined) {\n";
+    //    output << "        attrs." << name << " = " << propertyType << "[this." << name << "];\n";
+    //    output << "      }\n\n";
+    output << "        " << name << ": " << propertyType << ",\n";
+  }
+  
+  return output.str();
+}
+
 string VueComponentDefinitionWriter::write()
 {
   _buffer.clear();
@@ -508,7 +518,7 @@ string VueComponentDefinitionWriter::write()
     if (meta->is(MetaType::Interface)) {
       auto interface = static_cast<InterfaceMeta*>(meta);
       
-      if (isSubclassOf("NSView", interface)
+      if (interface->isSubclassOf("NSView")
           || interface->jsName == "NSView"
           || interface->jsName == "NSTableColumn") {
         writeVueComponent(meta, _module.first->Name);
@@ -567,7 +577,7 @@ void VueComponentDefinitionWriter::writeVueComponent(::Meta::Meta* meta, string 
     basePath = "../" + baseModuleName;
   }
   
-  if (isSubclassOf("NSView", interface->base) || interface->base->jsName == "NSView") {
+  if (interface->base->isSubclassOf("NSView") || interface->base->jsName == "NSView") {
     jsFile << "import " << noprefixBasename << " from '" << basePath << "/" << noprefixBasename << ".vue';\n";
   }
   
@@ -576,7 +586,7 @@ void VueComponentDefinitionWriter::writeVueComponent(::Meta::Meta* meta, string 
   
   jsFile << "  name: '" << shortName << "',\n\n";
 
-  if (isSubclassOf("NSView", interface->base) || interface->base->jsName == "NSView") {
+  if (interface->base->isSubclassOf("NSView") || interface->base->jsName == "NSView") {
     jsFile << "  extends: { " + noprefixBasename + " },\n\n";
   }
   

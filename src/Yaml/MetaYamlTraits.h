@@ -319,39 +319,15 @@ namespace yaml {
         }
     };
 
-    bool isSubclassOf(std::string superclass, Meta::InterfaceMeta& meta) {
-      bool stop = false;
-      bool isSuperclass = false;
-      auto base = meta.base;
-      
-      while (stop == false) {
-        if (base && base != NULL && base != nullptr) {
-          if (base->jsName == superclass) {
-            isSuperclass = true;
-            stop = true;
-          }
-          else {
-            base = base->base;
-          }
-        }
-        else {
-          stop = true;
-        }
-      }
-      
-      return isSuperclass;
-    }
-
     static void mapBaseMeta(IO& io, Meta::Meta* meta)
     {
         io.mapRequired("Name", meta->name);
         io.mapRequired("JsName", meta->jsName);
-//        io.mapRequired("SwiftName", meta->jsName);
         if (!meta->demangledName.empty()) {
             io.mapRequired("DemangledName", meta->demangledName);
         }
         if (meta->is(Meta::MetaType::Interface)) {
-          bool isView = isSubclassOf("NSView", meta->as<Meta::InterfaceMeta>());
+          bool isView = meta->as<Meta::InterfaceMeta>().isSubclassOf("NSView");
           io.mapRequired("isView", isView);
         }
         io.mapRequired("Filename", meta->fileName);

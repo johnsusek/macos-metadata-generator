@@ -232,7 +232,7 @@ string Meta::getFunctionInterfaceCall(string paramName, const InterfaceType& typ
   //    return self.constraint(equalTo: equalTo.toObjectOf(NSLayoutAnchor.self) as! NSLayoutAnchor<AnchorType>)
   //  }                                 ^ we are building this param value
   const InterfaceMeta& interface = *type.as<InterfaceType>().interface;
-  cout << jsConversionFnName(paramName, *type.typeArguments[0], qualType) << endl;
+//  cout << jsConversionFnName(paramName, *type.typeArguments[0], qualType) << endl;
   auto& typeArg = *type.typeArguments[0];
   string blockRetType2 = Type::formatType(typeArg, qualType, true);
   
@@ -469,6 +469,28 @@ string Meta::Meta::dumpDeclComments(::Meta::Meta* owner) {
   return out;
 }
 
+// MARK: - InterfaceMeta
+
+bool Meta::InterfaceMeta::isSubclassOf(std::string superclass) {
+  bool stop = false;
+  bool isSuperclass = false;
+  auto base = this->base;
+
+  while (stop == false) {
+    if (base && base != NULL && base != nullptr) {
+      if (base->jsName == superclass) {
+        return true;
+      }
+      base = base->base;
+    }
+    else {
+      stop = true;
+    }
+  }
+  
+  return isSuperclass;
+}
+
 // MARK: - MethodMeta
 
 bool Meta::MethodMeta::hasTargetAction() {
@@ -506,16 +528,32 @@ string Meta::MethodMeta::builtName() {
   size_t idx = 0;
   size_t numTokens = this->hasTargetAction() ? selectorTokens.size() - 2 : selectorTokens.size();
   
+  if (this->jsName == "addSubview") {
+    cout << "";
+  }
+  
+  size_t withOffset = 0;
+  
+  if (numTokens > 1 && selectorTokens[0] == this->jsName) {
+    withOffset = 1;
+  }
+  
   for (size_t i = 0; i < numTokens; i++) {
     std::string token = selectorTokens[i];
     if (token == "_") {
       continue;
     }
-    idx++;
+
     token[0] = toupper(token[0]);
-    if (idx > 0 && token.substr(0, 4) != "With" && i > 0 && selectorTokens[i-1] != "with") {
+
+    if (idx > withOffset &&
+        token.substr(0, 4) != "With" &&
+        selectorTokens[i-1] != "with") {
       output += "With";
     }
+
+    idx++;
+
     output += token;
   }
   
@@ -611,7 +649,7 @@ string Meta::MethodMeta::getParamsAsString(BaseClassMeta* owner, ParamCallType c
   }
   
   size_t lastParamIndex = this->getFlags(::Meta::MetaFlags::MethodHasErrorOutParameter) ? (parameters.size() - 1) : parameters.size();
-  size_t numLabels = this->argLabels.size();  
+  size_t numLabels = this->argLabels.size();
   bool isInitWithTargetAction = this->isInit() && this->hasTargetAction();
   
   size_t numUnLabeledArgs = lastParamIndex - numLabels;

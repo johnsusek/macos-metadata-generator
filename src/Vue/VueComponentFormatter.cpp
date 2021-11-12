@@ -169,6 +169,9 @@ string VueComponentFormatter::formatType(const Type& type, const clang::QualType
       break;
     case TypeEnum: {
       const EnumType& enumType = type.as<EnumType>();
+      if (enumType.enumMeta->jsName == "NSImageScaling") {
+        cout << "";
+      }
       return enumType.enumMeta->jsName;
 //      if (enumType.enumMeta->swiftModule == "_global" && enumType.enumMeta->swiftClass == "_global") {
 //        return enumType.enumMeta->swiftName;
