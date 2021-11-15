@@ -196,11 +196,12 @@ public:
   
     bool isInit() const
     {
-      bool isInit = this->getFlags(MethodIsInitializer)
+      return this->getFlags(MethodIsInitializer)
         || this->getFlags(MethodReturnsSelf)
-        || this->jsName == "create";
-
-      return isInit;
+        || this->name == "init"
+        || this->jsName == "create"
+        || this->name.substr(0, 8) == "initWith"
+        || this->jsName.substr(0, 10) == "createWith";
     }
 
     void setFlags(MetaFlags flags, bool value)

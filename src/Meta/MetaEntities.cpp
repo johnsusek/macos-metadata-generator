@@ -134,6 +134,7 @@ string Meta::renamedName(string name, string ownerKey) {
   if (name == "NSDecimal") {
     return name;
   }
+  
   if (name == "NSDecimalNumber") {
     return name;
   }
@@ -355,7 +356,7 @@ bool Meta::Meta::getUnavailableInSwift(::Meta::Meta* owner) {
   if (ownerKey == "NSURL") {
     ownerKey = "URL";
   }
-
+  
   auto key = ownerKey + "." + this->name;
 
   // attr lookups use the selector (this->name)
@@ -528,10 +529,9 @@ string Meta::MethodMeta::builtName() {
   size_t idx = 0;
   size_t numTokens = this->hasTargetAction() ? selectorTokens.size() - 2 : selectorTokens.size();
   
-  if (this->jsName == "addSubview") {
-    cout << "";
-  }
-  
+  string moduleName = this->module->Name;
+  regex frameworkPrefixes("^(NS|AV|IK)");
+  string moduleNameNoPrefix = regex_replace(moduleName, frameworkPrefixes, "");
   size_t withOffset = 0;
   
   if (numTokens > 1 && selectorTokens[0] == this->jsName) {
@@ -553,6 +553,18 @@ string Meta::MethodMeta::builtName() {
     }
 
     idx++;
+    
+    // In module NSURL or URL, changes e.g.
+    // URLWithString -> WithString
+
+    if (token.substr(0, moduleNameNoPrefix.size() + 4) == moduleNameNoPrefix + "With") {
+      // remove e.g. "NSURLWith"
+      token = token.substr(moduleNameNoPrefix.size() + 4);
+    }
+    if (token.substr(0, moduleName.size() + 4) == moduleName + "With") {
+      // remove e.g. "URLWith"
+      token = token.substr(moduleName.size() + 4);
+    }
 
     output += token;
   }
@@ -760,12 +772,6 @@ string Meta::MethodMeta::getParamsAsString(BaseClassMeta* owner, ParamCallType c
     string retTypeStr = Type::formatType(type, qualType, ignorePointerType);
 
     if (callType == Call) {
-      // initWithFrame(frame: frame)
-      
-      if (this->name == "URLWithString:relativeToURL:") {
-        cout << "";
-      }
-      
       if (isInitWithTargetAction && i >= lastParamIndex - 2) {
         output += paramName + ": nil";
       }
@@ -813,16 +819,17 @@ string Meta::MethodMeta::getParamsAsString(BaseClassMeta* owner, ParamCallType c
       }
     }
     else if (callType == Implementation) {
-      // initWithFrame(frame: CGRect)
-      if (paramLabel != paramName) {
-        output += paramLabel + " " + paramName;
+      if (this->isInit()) {
+        output += "_ " + sanitizeIdentifierForSwift(paramName);
+      }
+      else if (paramLabel == paramName) {
+        output += sanitizeIdentifierForSwift(paramLabel);
       }
       else {
-        output += "_ " + paramName;
+        output += sanitizeIdentifierForSwift(paramLabel) + " " + sanitizeIdentifierForSwift(paramName);
       }
     }
     else if (callType == Definition) {
-      // initWithFrame(_: CGRect)
       output += sanitizeIdentifierForSwift(paramLabel);
     }
     

@@ -279,6 +279,11 @@ string JSExportDefinitionWriter::writeMethod(MethodMeta* method, BaseClassMeta* 
 
   string retTypeString = Type::formatType(typeArg, methodDecl.getReturnType());
 
+  if (method->name == "URLFromPasteboard:" ||
+      method->name == "URLWithDataRepresentation:relativeToURL:") {
+    retTypeString = "NSURL";
+  }
+  
   bool unavailableInSwift = method->getUnavailableInSwift(owner);
 
   if (unavailableInSwift && !method->isRenamed) {
@@ -303,10 +308,14 @@ string JSExportDefinitionWriter::writeMethod(MethodMeta* method, BaseClassMeta* 
   
   string methodParams;
 
-  if (method->isInit() || method->getParamsAsString(owner).find("JSValue") != string::npos) {
+  if (method->isInit()) {
     output << ::Meta::sanitizeIdentifierForSwift(method->builtName());
     methodParams = method->getParamsAsString(owner, ParamCallType::Implementation);
   }
+//  else if (method->getParamsAsString(owner).find("JSValue") != string::npos) {
+//    output << ::Meta::sanitizeIdentifierForSwift(method->jsName);
+//    methodParams = method->getParamsAsString(owner, ParamCallType::Implementation);
+//  }
   else {
     output << ::Meta::sanitizeIdentifierForSwift(method->jsName);
     methodParams = method->getParamsAsString(owner);
@@ -417,44 +426,44 @@ const char * viewOverrides = R"__literal(
   })__literal";
 
 void JSExportDefinitionWriter::writeExtension(string protocolName, InterfaceMeta* meta, CompoundMemberMap<MethodMeta>* staticMethods, CompoundMemberMap<MethodMeta>* instanceMethods) {
-  bool isViewSubclass = meta->isSubclassOf("NSView");
-  
-  if (isViewSubclass) {
-    string viewName = meta->jsName.substr(2);
-    
-    _buffer << "@objc protocol " + viewName + "Exports: JSExport";
-    
-    if (meta->base) {
-      _buffer << ", " << meta->base->jsName << "Exports";
-    }
-    
-    _buffer << " {\n";
-    
-    if (!staticMethods->empty()) {
-      _buffer << "  // Static Methods\n";
-      
-      for (auto& methodPair : *staticMethods) {
-        MethodMeta* method = methodPair.second.second;
-        BaseClassMeta* owner = methodPair.second.first;
-
-        if (!method->isInit()) {
-          continue;
-        }
-        
-        string output = writeMethod(methodPair, meta, {}, "static", meta->jsName);
-        
-        if (output.size()) {
-          _buffer << method->dumpDeclComments(meta) << endl;
-          _buffer << _docSet.getCommentFor(method, owner).toString("");
-          _buffer << "  " << output << endl;
-        }
-      }
-    }
-
-    _buffer << "}\n\n";
-
-    writeClass(meta, staticMethods, instanceMethods);
-  }
+//  bool isViewSubclass = meta->isSubclassOf("NSView");
+//
+//  if (isViewSubclass) {
+//    string viewName = meta->jsName.substr(2);
+//
+//    _buffer << "@objc protocol " + viewName + "Exports: JSExport";
+//
+//    if (meta->base) {
+//      _buffer << ", " << meta->base->jsName << "Exports";
+//    }
+//
+//    _buffer << " {\n";
+//
+//    if (!staticMethods->empty()) {
+//      _buffer << "  // Static Methods\n";
+//
+//      for (auto& methodPair : *staticMethods) {
+//        MethodMeta* method = methodPair.second.second;
+//        BaseClassMeta* owner = methodPair.second.first;
+//
+//        if (!method->isInit()) {
+//          continue;
+//        }
+//
+//        string output = writeMethod(methodPair, meta, {}, "static", meta->jsName);
+//
+//        if (output.size()) {
+//          _buffer << method->dumpDeclComments(meta) << endl;
+//          _buffer << _docSet.getCommentFor(method, owner).toString("");
+//          _buffer << "  " << output << endl;
+//        }
+//      }
+//    }
+//
+//    _buffer << "}\n\n";
+//
+//    writeClass(meta, staticMethods, instanceMethods);
+//  }
   
   _buffer << "extension " << protocolName << ": " << protocolName << "Exports {\n";
   
@@ -463,10 +472,6 @@ void JSExportDefinitionWriter::writeExtension(string protocolName, InterfaceMeta
 
     if (method->isInit()) {
       BaseClassMeta* owner = methodPair.second.first;
-      
-//      if (method->name == "baseUnit" && protocolName != "Dimension") {
-//        continue;
-//      }
       
       if (protocolName == "FileHandle") {
         continue;
@@ -505,9 +510,13 @@ void JSExportDefinitionWriter::writeExtension(string protocolName, InterfaceMeta
 void JSExportDefinitionWriter::writeMethodImpl(MethodMeta* method, BaseClassMeta* owner, bool isStatic) {
   auto methodImplParams = method->getParamsAsString(owner, ParamCallType::Implementation);
   auto methodCallParams = method->getParamsAsString(owner, ParamCallType::Call);
+  bool unavailableInSwift = method->getUnavailableInSwift(owner);
   
-  _buffer << method->dumpDeclComments(owner) << endl;
+  if (unavailableInSwift && !method->isRenamed) {
+    _buffer << "  /* ";
+  }
 
+  _buffer << method->dumpDeclComments(owner) << endl;
   _buffer << "  @objc public ";
   
   if (owner->is(MetaType::Interface)) {
@@ -529,16 +538,17 @@ void JSExportDefinitionWriter::writeMethodImpl(MethodMeta* method, BaseClassMeta
 
   string implName = method->jsName;
   
-  if (method->jsName == "constraint") {
-    implName = method->builtName();
-  }
-  
   _buffer << "func " << implName << methodImplParams;
 
   const clang::ObjCMethodDecl& methodDecl = *clang::dyn_cast<clang::ObjCMethodDecl>(method->declaration);
   auto& first = *method->signature[0];
   string retTypeString = Type::formatType(first, methodDecl.getReturnType());
   
+  if (method->name == "URLFromPasteboard:" ||
+      method->name == "URLWithDataRepresentation:relativeToURL:") {
+    retTypeString = "NSURL";
+  }
+
   _buffer << " -> " + retTypeString;
   
   string typeNullabilityStr = method->getTypeNullability(owner);
@@ -558,7 +568,13 @@ void JSExportDefinitionWriter::writeMethodImpl(MethodMeta* method, BaseClassMeta
   _buffer << callName;
   _buffer << methodCallParams << endl;
   
-  _buffer << "  }\n\n";
+  _buffer << "  }";
+  
+  if (unavailableInSwift && !method->isRenamed) {
+    _buffer << "  */ ";
+  }
+
+  _buffer << "\n\n";
 }
 
 void JSExportDefinitionWriter::writeCreate(MethodMeta* method, BaseClassMeta* owner, bool isStatic) {
@@ -573,6 +589,11 @@ void JSExportDefinitionWriter::writeCreate(MethodMeta* method, BaseClassMeta* ow
   
   auto methodImplParams = method->getParamsAsString(owner, ParamCallType::Implementation);
   auto methodCallParams = method->getParamsAsString(owner, ParamCallType::Call);
+  bool unavailableInSwift = method->getUnavailableInSwift(owner);
+  
+  if (unavailableInSwift && !method->isRenamed) {
+    _buffer << "  /* ";
+  }
 
   _buffer << method->dumpDeclComments(owner) << endl;
 
@@ -597,6 +618,11 @@ void JSExportDefinitionWriter::writeCreate(MethodMeta* method, BaseClassMeta* ow
   auto& first = *method->signature[0];
   string retTypeString = Type::formatType(first, methodDecl.getReturnType());
   
+  if (method->name == "URLFromPasteboard:" ||
+      method->name == "URLWithDataRepresentation:relativeToURL:") {
+    retTypeString = "NSURL";
+  }
+
   _buffer << " -> " + retTypeString;
   
   string typeNullabilityStr = method->getTypeNullability(owner);
@@ -621,18 +647,25 @@ void JSExportDefinitionWriter::writeCreate(MethodMeta* method, BaseClassMeta* ow
   _buffer << callName;
   
   _buffer << methodCallParams << endl;
+
   
-  _buffer << "  }\n\n";
+  _buffer << "  }";
+
+  if (unavailableInSwift && !method->isRenamed) {
+    _buffer << "  */ ";
+  }
+
+  _buffer << "\n\n";
 }
 
-void JSExportDefinitionWriter::writeClass(InterfaceMeta* meta, CompoundMemberMap<MethodMeta>* staticMethods, CompoundMemberMap<MethodMeta>* instanceMethods) {
-  string viewName = meta->jsName.substr(2);
-
-  _buffer << "@objc(" << viewName << ") public class " + viewName + ": " + meta->jsName;
-  _buffer << ", " << viewName << "Exports, JSOverridableView {";
-  _buffer << viewOverrides << endl << endl;
-  _buffer << "}\n\n";
-}
+//void JSExportDefinitionWriter::writeClass(InterfaceMeta* meta, CompoundMemberMap<MethodMeta>* staticMethods, CompoundMemberMap<MethodMeta>* instanceMethods) {
+//  string viewName = meta->jsName.substr(2);
+//
+//  _buffer << "@objc(" << viewName << ") public class " + viewName + ": " + meta->jsName;
+//  _buffer << ", " << viewName << "Exports, JSOverridableView {";
+//  _buffer << viewOverrides << endl << endl;
+//  _buffer << "}\n\n";
+//}
 
 void JSExportDefinitionWriter::writeProto(ProtocolMeta* meta) {
   _buffer << "@objc(" << meta->jsName << ") protocol " << meta->jsName << "Exports: JSExport";
@@ -835,7 +868,7 @@ void JSExportDefinitionWriter::visit(InterfaceMeta* meta)
   }
 
   CompoundMemberMap<MethodMeta> compoundStaticMethods;
-  static map<string, bool> addedConstructors = {};
+  map<string, bool> addedConstructors = {};
 
   for (MethodMeta* method : meta->staticMethods) {
     if (hiddenMethods.find(method->jsName) != hiddenMethods.end()) {
@@ -857,9 +890,13 @@ void JSExportDefinitionWriter::visit(InterfaceMeta* meta)
       }
     }
     
+    if (method->name == "URLByResolvingBookmarkData:options:relativeToURL:bookmarkDataIsStale:error:") {
+      continue;
+    }
+    
     if (method->isInit()) {
       // Skip empty constructors since bridged NSObject includes this
-      if (method->argLabels.empty() || (method->argLabels.size() == 2 && method->hasTargetAction())) {
+      if (method->signature.size() <= 1 || (method->argLabels.size() == 2 && method->hasTargetAction())) {
         continue;
       }
       

@@ -446,7 +446,7 @@ string VueComponentDefinitionWriter::writeProperty(PropertyMeta* meta, BaseClass
       
     }
     else {
-      cout << "Using " << retType2 << " instead of " << returnType << endl;
+//      cout << "Using " << retType2 << " instead of " << returnType << endl;
       returnType = retType2;
     }
   }
@@ -483,7 +483,7 @@ string VueComponentDefinitionWriter::writePropertyComputed(PropertyMeta* meta, B
       
     }
     else {
-      cout << "Using " << retType2 << " instead of " << propertyType << endl;
+//      cout << "Using " << retType2 << " instead of " << propertyType << endl;
       propertyType = retType2;
     }
   }

@@ -27,9 +27,6 @@ public:
 
     bool tryCreate(const clang::Decl& decl, Meta** meta, std::string categoryName);
 
-//    static std::string getMethodName(const clang::ObjCMethodDecl* method, std::string categoryName);
-//    static void setSwiftName(clang::NamedDecl decl, Meta& meta, std::string categoryName);
-
     TypeFactory& getTypeFactory()
     {
         return this->_typeFactory;

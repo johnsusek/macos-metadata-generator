@@ -557,7 +557,8 @@ void DefinitionWriter::visit(InterfaceMeta* meta)
 //    return;
 //  }
   
-  if (metaName == "Set" || metaName == "String" || metaName == "NSObject") {
+  if (metaName == "Set" || metaName == "String" || metaName == "NSObject" || metaName == "NSSimpleCString" ||
+      metaName == "Date" || metaName == "Error" || metaName == "Array" || metaName == "NSMutableString") {
     return;
   }
   
@@ -573,22 +574,12 @@ void DefinitionWriter::visit(InterfaceMeta* meta)
   }
   
   string parametersString = getTypeParametersStringOrEmpty(clang::cast<clang::ObjCInterfaceDecl>(meta->declaration));
-  
-  // These conflict with TS global types
-  if (metaName == "Date" || metaName == "Error" || metaName == "Array" || metaName == "NSMutableString" || metaName == "NSSimpleCString") {
+
+  if (metaName == "NSBitmapImageRep") {
     out << "// @ts-ignore\n";
   }
   
-  if (metaName == "Date" || metaName == "Error") {
-    out << "type " << metaName << " = NS" << metaName << "\n";
-    out << "export class NS" << metaName;
-  }
-  else {
-    if (metaName == "NSBitmapImageRep") {
-      out << "// @ts-ignore\n";
-    }
-    out << "export class " << metaName;
-  }
+  out << "export class " << metaName;
   
   out << parametersString;
   
@@ -811,9 +802,6 @@ void DefinitionWriter::visit(InterfaceMeta* meta)
   out << "}" << endl << endl;
   
   if (containerName != metaName) {
-    if (containerName == "QLPreviewItem") {
-      cout << "";
-    }
     namespaceClasses[containerName].push_back(out.str());
     return;
   }
@@ -1236,7 +1224,8 @@ string DefinitionWriter::writeMethod(MethodMeta* method, BaseClassMeta* owner, b
   
   // For some reason, has different params than the method it is overriding
   if (owner->jsName == "NSMenuItemCell") {
-    if (method->builtName() == "drawImageWithFrameInView" || method->builtName() == "drawTitleWithFrameInView") {
+    if (method->builtName() == "drawImageWithFrameInView" ||
+        method->builtName() == "drawTitleWithFrameInView") {
       output << "// ";
     }
   }
@@ -1289,7 +1278,6 @@ string DefinitionWriter::writeMethod(MethodMeta* method, BaseClassMeta* owner, b
   }
   
   if (method->isInit() ||
-      method->jsName == "constraint" ||
       owner->jsName == "NSLayoutConstraint" ||
       owner->jsName == "NSView") {
     output << method->builtName();
@@ -1549,10 +1537,6 @@ string DefinitionWriter::writeNamespaces(bool writeToClasses)
       namespaceName = namespaceNameTokens[0];
     }
 
-    if (namespaceName == "QLPreviewingController") {
-      cout << "";
-    }
-    
     bool hasDecls = namespaceEnums[namespaceName].size() ||
       namespaceClasses[namespaceName].size();
     
@@ -1663,11 +1647,24 @@ string DefinitionWriter::writeNamespaces(bool writeToClasses)
 
           for (size_t i = 0; i < fields.size(); i++) {
             output << "  " +  fields[i].name + ": " + fields[i].value;
+            output << ",";
+            output << "\n";
+          }
+
+          map<string, bool> writtenValues = {};
+
+          for (size_t i = 0; i < fields.size(); i++) {
+            if (writtenValues[fields[i].value]) {
+              continue;
+            }
+            writtenValues[fields[i].value] = true;
+            output << "  '" +  fields[i].value + "': '" + fields[i].name + "'";
             if (i < fields.size() - 1) {
               output << ",";
             }
             output << "\n";
           }
+          
           output << "};\n\n";
         }
         else {

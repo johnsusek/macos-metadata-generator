@@ -349,18 +349,7 @@ void MetaFactory::createFromEnum(const clang::EnumDecl& enumeration, EnumMeta& e
       enumMeta.swiftNameFields.push_back({ enumField->getNameAsString().substr(fieldNamePrefixLength, string::npos), valueStr });
     }
     enumMeta.fullNameFields.push_back({ enumField->getNameAsString(), valueStr });
-  }
-  
-  // Lowercase enum values to match swift
-  //
-  // BackingStoreType.Retained -> BackingStoreType.retained
-  // StyleMask.HUDWindow -> StyleMask.HUDWindow
-  //
-//  for (auto nameField : enumMeta.swiftNameFields) {
-//    if (nameField.name.size() > 1 && islower(nameField.name[1])) {
-//      nameField.name[0] = tolower(nameField.name[0]);
-//    }
-//  }
+  }  
 }
 
 void MetaFactory::createFromEnumConstant(const clang::EnumConstantDecl& enumConstant, EnumConstantMeta& enumConstantMeta)
@@ -689,28 +678,44 @@ void MetaFactory::populateIdentificationFields(const clang::NamedDecl& decl, Met
       const clang::TagDecl* tagDecl = clang::dyn_cast<clang::TagDecl>(&decl);
       meta.name = meta.jsName = getTypedefOrOwnName(tagDecl);
       nameKey = meta.jsName;
-      if (meta.jsName == "NSImageScaling") {
-        cout << "";
-      }
-      
-
       break;
     }
     default:
       throw logic_error(string("Can't generate jsName for ") + decl.getDeclKindName() + " type of declaration.");
   }
-
+  
   // check if renamed
   if (nameKey.size() && meta.name.size()) {
-    string selector;
-    string renamed = renamedName(nameKey, categoryName);
+    string renamed1 = renamedName(nameKey, categoryName);
+    string selector = renamed1;
 
-    if (renamed != nameKey) {
+    if (renamed1 != nameKey) {
       meta.isRenamed = true;
     }
-    
-    selector = renamed;
 
+    string renamedCategoryName = renamedName(categoryName);
+    string renamed4 = renamedName(nameKey, renamedCategoryName);
+    
+    if (renamed4 != nameKey) {
+      meta.isRenamed = true;
+      selector = renamed4;
+    }
+    else if (meta.module) {
+      string moduleName = meta.module->Name;
+      string renamedModuleName = renamedName(moduleName);
+      string renamed2 = renamedName(nameKey, moduleName);
+      string renamed3 = renamedName(nameKey, renamedModuleName);
+
+      if (renamed2 != nameKey) {
+        meta.isRenamed = true;
+        selector = renamed2;
+      }
+      else if (renamed3 != nameKey) {
+        meta.isRenamed = true;
+        selector = renamed3;
+      }
+    }
+    
     vector<string> nameParts = selectorParts(selector);
     if (nameParts[0] != "String") {
       meta.jsName = nameParts[0];
@@ -782,7 +787,7 @@ void MetaFactory::populateBaseClassMetaFields(const clang::ObjCContainerDecl& de
     categoryName = decl.getNameAsString();
   }
   
-  categoryName = renamedName(categoryName);
+//  categoryName = renamedName(categoryName);
   
   for (clang::ObjCProtocolDecl* protocol : this->getProtocols(&decl)) {
     Meta* protocolMeta;
