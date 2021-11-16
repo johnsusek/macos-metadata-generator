@@ -159,24 +159,13 @@ string VueComponentFormatter::formatType(const Type& type, const clang::QualType
     case TypeStruct: {
       const StructType& structType = type.as<StructType>();
       return structType.structMeta->jsName;
-//      if (structType.structMeta->swiftModule == "_global" && structType.structMeta->swiftClass == "_global") {
-//        return structType.structMeta->swiftName;
-//      }
-//      return structType.structMeta->swiftClass + "." + structType.structMeta->swiftName;
     }
     case TypeUnion:
       typeStr = type.as<UnionType>().unionMeta->jsName;
       break;
     case TypeEnum: {
       const EnumType& enumType = type.as<EnumType>();
-      if (enumType.enumMeta->jsName == "NSImageScaling") {
-        cout << "";
-      }
       return enumType.enumMeta->jsName;
-//      if (enumType.enumMeta->swiftModule == "_global" && enumType.enumMeta->swiftClass == "_global") {
-//        return enumType.enumMeta->swiftName;
-//      }
-//      return enumType.enumMeta->swiftClass + "." + enumType.enumMeta->swiftName;
     }
     case TypeTypeArgument:
       typeStr = type.as<TypeArgumentType>().name;

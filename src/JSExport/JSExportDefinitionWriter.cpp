@@ -312,10 +312,10 @@ string JSExportDefinitionWriter::writeMethod(MethodMeta* method, BaseClassMeta* 
     output << ::Meta::sanitizeIdentifierForSwift(method->builtName());
     methodParams = method->getParamsAsString(owner, ParamCallType::Implementation);
   }
-//  else if (method->getParamsAsString(owner).find("JSValue") != string::npos) {
-//    output << ::Meta::sanitizeIdentifierForSwift(method->jsName);
-//    methodParams = method->getParamsAsString(owner, ParamCallType::Implementation);
-//  }
+  else if (method->getParamsAsString(owner).find("JSValue") != string::npos) {
+    output << ::Meta::sanitizeIdentifierForSwift(method->builtName());
+    methodParams = method->getParamsAsString(owner, ParamCallType::Implementation);
+  }
   else {
     output << ::Meta::sanitizeIdentifierForSwift(method->jsName);
     methodParams = method->getParamsAsString(owner);
@@ -489,6 +489,10 @@ void JSExportDefinitionWriter::writeExtension(string protocolName, InterfaceMeta
     MethodMeta* method = methodPair.second.second;
     BaseClassMeta* owner = methodPair.second.first;
 
+    if (method->name == "getTasksWithCompletionHandler:") {
+      continue;
+    }
+
     if (method->isInit()) {
       if (protocolName == "NSWindow") {
         writeCreate(method, owner);
@@ -498,7 +502,9 @@ void JSExportDefinitionWriter::writeExtension(string protocolName, InterfaceMeta
 //      writeCreate(method, owner);
     }
     else if (protocolName != "Set" && methodHasGenericParams(method)) {
-      if (protocolName == "NSLayoutAnchor" || protocolName == "NSLayoutConstraint") {
+      if (protocolName == "NSLayoutAnchor"
+          || protocolName == "NSLayoutConstraint"
+          || protocolName == "URLSession") {
         writeMethodImpl(method, owner);
       }
     }
@@ -508,8 +514,6 @@ void JSExportDefinitionWriter::writeExtension(string protocolName, InterfaceMeta
 }
 
 void JSExportDefinitionWriter::writeMethodImpl(MethodMeta* method, BaseClassMeta* owner, bool isStatic) {
-  auto methodImplParams = method->getParamsAsString(owner, ParamCallType::Implementation);
-  auto methodCallParams = method->getParamsAsString(owner, ParamCallType::Call);
   bool unavailableInSwift = method->getUnavailableInSwift(owner);
   
   if (unavailableInSwift && !method->isRenamed) {
@@ -538,6 +542,12 @@ void JSExportDefinitionWriter::writeMethodImpl(MethodMeta* method, BaseClassMeta
 
   string implName = method->jsName;
   
+  if (method->getParamsAsString(owner).find("JSValue") != string::npos) {
+    implName = method->builtName();
+  }
+  
+  auto methodImplParams = method->getParamsAsString(owner, ParamCallType::Implementation);
+
   _buffer << "func " << implName << methodImplParams;
 
   const clang::ObjCMethodDecl& methodDecl = *clang::dyn_cast<clang::ObjCMethodDecl>(method->declaration);
@@ -566,6 +576,9 @@ void JSExportDefinitionWriter::writeMethodImpl(MethodMeta* method, BaseClassMeta
   string callName = method->jsName;
   
   _buffer << callName;
+
+  auto methodCallParams = method->getParamsAsString(owner, ParamCallType::Call);
+
   _buffer << methodCallParams << endl;
   
   _buffer << "  }";
@@ -842,7 +855,9 @@ void JSExportDefinitionWriter::visit(ProtocolMeta* meta)
       regex re(".*JSValue.*");
       bool returnsJSValue = regex_match(output, re);
 
-      if (returnsJSValue && meta->jsName != "NSLayoutAnchor") {
+      if (returnsJSValue
+          && meta->jsName != "NSLayoutAnchor"
+          && meta->jsName != "URLSession") {
         _buffer << "// jsvalue ";
       }
 
@@ -927,6 +942,10 @@ void JSExportDefinitionWriter::visit(InterfaceMeta* meta)
     }
     
     if (method->jsName == "createByResolvingBookmarkData") {
+      continue;
+    }
+    
+    if (method->name == "getTasksWithCompletionHandler:") {
       continue;
     }
     
@@ -1026,50 +1045,6 @@ void JSExportDefinitionWriter::visit(InterfaceMeta* meta)
   CompoundMemberMap<PropertyMeta> inheritedInstanceProperties;
 
   getInheritedMembersRecursive(meta, &inheritedStaticMethods, &inheritedInstanceMethods, &inheritedStaticProperties, &inheritedInstanceProperties);
-//
-//  for (auto& propertyPair : inheritedInstanceProperties) {
-//    PropertyMeta* property = propertyPair.second.second;
-//
-//    if (ownInstanceProperties.find(property->name) != ownInstanceProperties.end()) {
-//      continue;
-//    }
-//
-//    ownInstanceProperties.emplace(propertyPair);
-//  }
-//
-//  for (auto& propertyPair : inheritedStaticProperties) {
-//    PropertyMeta* property = propertyPair.second.second;
-//
-//    if (ownStaticProperties.find(property->name) != ownStaticProperties.end()) {
-//      continue;
-//    }
-//
-//    ownStaticProperties.emplace(propertyPair);
-//  }
-//
-//  if (meta->jsName == "NSLayoutYAxisAnchor") {
-//    cout << "";
-//  }
-//
-//  for (auto& methodPair : inheritedInstanceMethods) {
-//    MethodMeta* method = methodPair.second.second;
-//
-//    if (compoundInstanceMethods.find(method->name) != compoundInstanceMethods.end()) {
-//      continue;
-//    }
-//
-//    if (method->isInit()) {
-//      //      cerr << "Skipping inherited create " << method->name << " in " << meta->jsName << " from " << meta->base->jsName << endl;
-//      continue;
-//    }
-//
-//    if (meta->jsName == "NSLayoutYAxisAnchor") {
-//      cout << "Emplacing " << method->name << endl;
-//    }
-//
-//
-//    compoundInstanceMethods.emplace(methodPair);
-//  }
   
   for (auto& methodPair : inheritedStaticMethods) {
     MethodMeta* method = methodPair.second.second;
@@ -1174,7 +1149,9 @@ void JSExportDefinitionWriter::visit(InterfaceMeta* meta)
         regex re(".*JSValue.*");
         bool returnsJSValue = regex_match(output, re);
         
-        if (returnsJSValue && meta->jsName != "NSLayoutAnchor") {
+        if (returnsJSValue
+            && meta->jsName != "NSLayoutAnchor"
+            && meta->jsName != "URLSession") {
           _buffer << "// jsvalue ";
         }
 
@@ -1241,13 +1218,11 @@ void JSExportDefinitionWriter::visit(InterfaceMeta* meta)
         regex re(".*JSValue.*");
         bool returnsJSValue = regex_match(output, re);
         
-        if (returnsJSValue && meta->jsName != "NSLayoutAnchor") {
+        if (returnsJSValue
+            && meta->jsName != "NSLayoutAnchor"
+            && meta->jsName != "URLSession") {
           _buffer << "// jsvalue ";
         }
-        
-//        if (method->isInit()) {
-//          _buffer << "// instanceinit ";
-//        }
         
         _buffer << output << endl;
       }
@@ -1351,6 +1326,10 @@ string JSExportDefinitionWriter::write()
       
       if (meta->jsName == "Error" || meta->jsName == "URL") {
         filename = meta->name + ".swift";
+      }
+      
+      if (filename.substr(0, 3) == "URL") {
+        filename = "NS" + filename;
       }
 
       writeJSExport(filename, meta, _module.first->Name);

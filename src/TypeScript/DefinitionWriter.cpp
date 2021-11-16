@@ -669,11 +669,28 @@ void DefinitionWriter::visit(InterfaceMeta* meta)
   for (auto& propertyPair : ownInstanceProperties) {
     BaseClassMeta* owner = propertyPair.second.first;
     PropertyMeta* propertyMeta = propertyPair.second.second;
+    
+    bool skipProperty = false;
+
+    for (auto& methodPair : compoundInstanceMethods) {
+      MethodMeta* method = methodPair.second.second;
+
+      if (method->jsName == propertyMeta->jsName) {
+        cerr << "Skipping " << method->jsName << endl;
+        skipProperty = true;
+        break;
+      }
+    }
+    
+    if (skipProperty) {
+      continue;
+    }
+
     string propOut = this->writeProperty(propertyMeta, owner, meta, baseClassInstanceProperties);
     
     if (!propOut.empty()) {
       //      out << "  // ownInstanceProperties\n";
-      
+
       // if this (selectedCell) ownInstanceProperties exists in parent class's methods (selectedCell())
       if (protocolInheritedStaticProperties.find(propertyMeta->name) != protocolInheritedStaticProperties.end()) {
         out << "  // ";
@@ -744,7 +761,23 @@ void DefinitionWriter::visit(InterfaceMeta* meta)
     BaseClassMeta* owner = propertyPair.second.first;
     PropertyMeta* propertyMeta = propertyPair.second.second;
     
-    //     out << "  // protocolInheritedInstanceProperties\n";
+    bool skipProperty = false;
+    
+    for (auto& methodPair : compoundInstanceMethods) {
+      MethodMeta* method = methodPair.second.second;
+      
+      if (method->jsName == propertyMeta->jsName) {
+        cerr << "Skipping " << method->jsName << endl;
+        skipProperty = true;
+        break;
+      }
+    }
+    
+    if (skipProperty) {
+      continue;
+    }
+
+//    out << "  // protocolInheritedInstanceProperties\n";
     
     bool isDuplicated = ownInstanceProperties.find(propertyMeta->name) != ownInstanceProperties.end();
     
@@ -767,16 +800,35 @@ void DefinitionWriter::visit(InterfaceMeta* meta)
     BaseClassMeta* owner = methodPair.second.first;
     MethodMeta* method = methodPair.second.second;
     
+    bool skipMethod = false;
+
+    for (PropertyMeta* property : meta->instanceProperties) {
+      if (property->jsName == method->jsName) {
+        cerr << "Skipping " << method->jsName << endl;
+        skipMethod = true;
+        break;
+      }
+    }
+
+    if (skipMethod) {
+      continue;
+    }
+
     string output = writeMethod(methodPair, meta, immediateProtocols, true);
     
     if (output.size()) {
-      //       out << "  // compoundInstanceMethods\n";
+//      out << "  // compoundInstanceMethods\n";
       
       if (meta->nameExistsInSuperclass(method->jsName, Property)) {
         out << "  // @ts-ignore \n";
       }
       else if (meta->nameExistsInSuperclass(method->jsName, Method)) {
         out << "  // @ts-ignore \n";
+      }
+      
+      // TODO: fix temp ugly hack
+      if (method->builtName() == "tag") {
+        out << "  // ";
       }
       
       if (ownStaticProperties.find(method->jsName) != ownStaticProperties.end()) {
@@ -806,11 +858,6 @@ void DefinitionWriter::visit(InterfaceMeta* meta)
     return;
   }
   
-  if (meta->isSubclassOf("NSView") && meta->shortName() != metaName) {
-    namespaceViews.push_back(meta);
-    out << "export type " << meta->shortName() << " = " << metaName << "\n\n";
-  }
-  
   _buffer << out.str();
 }
 
@@ -822,7 +869,6 @@ void DefinitionWriter::visit(ProtocolMeta* meta)
   
   allInterfaces[metaName] = true;
   
-  //  _buffer << "// protocol \n";
   _buffer << "interface " << metaName;
   
   map<string, PropertyMeta*> conformedProtocolsProperties;
@@ -900,8 +946,6 @@ void DefinitionWriter::visit(ProtocolMeta* meta)
 
 void DefinitionWriter::visit(EnumMeta* meta)
 {
-//  cout << "enum: " << meta->name << endl;
-
   string enumName;
   string enumContainer = "_container";
   string moduleName = renamedName(meta->module->Name);
@@ -949,21 +993,18 @@ void DefinitionWriter::visit(EnumMeta* meta)
   }
   else {
     // Add any enums from base classes
-//    if (moduleName == "NSCollectionViewFlowLayout") {
-      vector<string> parentNameParts;
-      StringUtils::split(meta->jsName, '.', back_inserter(parentNameParts));
+    vector<string> parentNameParts;
+    StringUtils::split(meta->jsName, '.', back_inserter(parentNameParts));
 
-      if (parentNameParts.size() > 1) {
-        string parentName = parentNameParts[0];
+    if (parentNameParts.size() > 1) {
+      string parentName = parentNameParts[0];
 
-        for (const auto& parentEnum: namespaceEnums[parentName]["_container"]) {
-          if (parentEnum.second != NULL) {
-//            cout << "Adding enum " << parentEnum.first << " to " << moduleName << " from parent " << parentName << endl;
-            namespaceEnums[moduleName][enumContainer][parentEnum.first] = parentEnum.second;
-          }
+      for (const auto& parentEnum: namespaceEnums[parentName]["_container"]) {
+        if (parentEnum.second != NULL) {
+          namespaceEnums[moduleName][enumContainer][parentEnum.first] = parentEnum.second;
         }
       }
-//    }
+    }
 
     if (enumContainer != "_container") {
       namespaceEnums[enumContainer]["_container"][enumName] = meta;
@@ -983,43 +1024,21 @@ void DefinitionWriter::visit(VarMeta* meta)
 
 // MARK: Visit Method
 
-void DefinitionWriter::visit(MethodMeta* meta)
-{
-//  allNamespaces[meta->module->Name] = true;
-}
+void DefinitionWriter::visit(MethodMeta* meta) { }
 
 // MARK: Visit Property
 
-void DefinitionWriter::visit(PropertyMeta* meta)
-{
-//  allNamespaces[meta->module->Name] = true;
-  }
+void DefinitionWriter::visit(PropertyMeta* meta) {   }
 
 // MARK: Visit EnumConstant
 
-void DefinitionWriter::visit(EnumConstantMeta* meta)
-{
-//  allNamespaces[meta->module->Name] = true;
-}
+void DefinitionWriter::visit(EnumConstantMeta* meta) { }
 
 // MARK: Visit Struct
 
 void DefinitionWriter::visit(StructMeta* meta)
 {
-  //  cout << "struct: " << meta->name << endl;
-  
   allNamespaces[meta->module->Name] = true;
-  //  string metaName = meta->jsName;
-  //  TSComment comment = _docSet.getCommentFor(meta);
-  //  string members = writeMembers(meta->fields, comment.fields);
-//  objcStructs[meta->module->Name].push_back(meta);
-  //
-  //  if (!members.empty()) {
-  //    _buffer << "// struct \n";
-  //    _buffer << "// interface " << metaName << " {\n";
-  ////    _buffer << members;
-  //    _buffer << "// }\n\n";
-  //  }
 }
 
 // MARK: Visit Union
@@ -1042,10 +1061,7 @@ void DefinitionWriter::visit(UnionMeta* meta)
 
 // MARK: Visit Category
 
-void DefinitionWriter::visit(CategoryMeta* meta)
-{
-//  allNamespaces[meta->module->Name] = true;
-}
+void DefinitionWriter::visit(CategoryMeta* meta) { }
 
 // MARK: Visit Function
 
@@ -1473,6 +1489,7 @@ string DefinitionWriter::writeExports() {
       continue;
     }
     
+    // TODO: make an "ignoredNamespaces" or something
     if (namespaceName == "Set" ||
         namespaceName == "Array" ||
         namespaceName == "String" ||

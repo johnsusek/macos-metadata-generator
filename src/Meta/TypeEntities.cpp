@@ -303,10 +303,10 @@ string Type::formatTypePointer(const PointerType& pointerType, const clang::Qual
   else if (name == "float") {
     out += "Float";
   }
-  else if (name == "Array") {
+  else if (name == "Array" || name == "NSArray") {
     out += "NSArray";
   }
-  else if (name == "String") {
+  else if (name == "String" || name == "NSString") {
     out += "NSString";
   }
   else if (name.substr(0, 13) == "NSDictionary<") {
@@ -366,12 +366,12 @@ string Type::formatTypeInterface(const Type& type, const clang::QualType pointer
       return out;
     }
     
-//    if (interfaceName != "Set" && interfaceType.hasClosedGenerics()) {
-//      cout << interfaceName << " has closed generics" << endl;
-//    }
     
     if (interfaceName == "NSLayoutAnchor") {
       return "JSValue";
+    }
+    else if (interfaceName != "Set" && interfaceType.hasClosedGenerics()) {
+//      cout << interfaceName << " has closed generics - use JSValue here?" << endl;
     }
     
     if (interfaceName == "NSDiffableDataSourceSnapshotReference") {

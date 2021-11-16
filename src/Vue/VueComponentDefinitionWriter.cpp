@@ -231,20 +231,11 @@ void VueComponentDefinitionWriter::visit(InterfaceMeta* meta)
   //
   // Vue render fn
   //
-  // Here we want to use our NSView subclass name for h(...),
-  // (i.e. StackView instead of NSStackView)
-  //
   // This gets passed as the first param to createElement()
-  // in createRenderer.ts, which will call a .create* method
-  // on the passed class name
   //
   
   _buffer << "  render() {\n";
-  
-  regex frameworkPrefixes("^(NS|AV|IK)");
-  string noprefixName = regex_replace(meta->jsName, frameworkPrefixes, "");
-  
-  _buffer << "    return h('" << noprefixName << "', this.attrs, this.$slots);\n";
+  _buffer << "    return h('" << meta->jsName << "', this.attrs, this.$slots);\n";
   _buffer << "  }\n";
 }
 

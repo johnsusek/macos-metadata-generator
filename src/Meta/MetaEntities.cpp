@@ -100,6 +100,8 @@ unordered_set<string> valueTypes = {
   { "Date" },
   { "Array" },
   { "Dictionary" },
+  { "NSArray" },
+  { "NSDictionary" },
   { "Point" },
   { "Range" },
   { "Rect" },
@@ -132,6 +134,14 @@ string Meta::renamedName(string name, string ownerKey) {
   string key = name;
 
   if (name == "NSDecimal") {
+    return name;
+  }
+  
+  if (name == "NSArray") {
+    return name;
+  }
+  
+  if (name == "NSString") {
     return name;
   }
   
@@ -209,11 +219,11 @@ string Meta::jsConversionFnName(string paramName, const Type& type, const clang:
   if (type.is(TypeType::TypeEnum)) {
     output += blockRetType + ".init(rawValue: Int(res.toInt32()))!";
   }
-  else if (interfaceName == "Array") {
+  else if (interfaceName == "Array" || interfaceName == "NSArray") {
     output += paramName + ".toArray()";
     output += " as" + asSymbol + " " + blockRetType;
   }
-  else if (interfaceName == "Dictionary") {
+  else if (interfaceName == "Dictionary" || interfaceName == "NSDictionary") {
     output += paramName + ".toDictionary()";
     output += " as" + asSymbol + " " + blockRetType;
   }
@@ -229,9 +239,11 @@ string Meta::jsConversionFnName(string paramName, const Type& type, const clang:
 }
 
 string Meta::getFunctionInterfaceCall(string paramName, const InterfaceType& type, const clang::QualType qualType) {
+  //
   //  @objc func constraint(equalTo: JSValue) -> NSLayoutConstraint {
   //    return self.constraint(equalTo: equalTo.toObjectOf(NSLayoutAnchor.self) as! NSLayoutAnchor<AnchorType>)
   //  }                                 ^ we are building this param value
+  //
   const InterfaceMeta& interface = *type.as<InterfaceType>().interface;
 //  cout << jsConversionFnName(paramName, *type.typeArguments[0], qualType) << endl;
   auto& typeArg = *type.typeArguments[0];
@@ -293,7 +305,7 @@ string Meta::getFunctionProtoCall(string paramName, const vector<Type*>& signatu
   
   output += "])";
   
-  if (!isNullableBlockReturn) {
+  if (!isNullableBlockReturn && blockRetType != "Void") {
     output += "!";
   }
   
@@ -317,11 +329,11 @@ string Meta::getFunctionProtoCall(string paramName, const vector<Type*>& signatu
     if (type.is(TypeType::TypeEnum)) {
       output += "return " + blockRetType + ".init(rawValue: Int(res.toInt32()))!";
     }
-    else if (interfaceName == "Array") {
+    else if (interfaceName == "Array" || interfaceName == "NSArray") {
       output += "return res.toArray()";
       output += " as" + asSymbol + " " + blockRetType;
     }
-    else if (interfaceName == "Dictionary") {
+    else if (interfaceName == "Dictionary" || interfaceName == "NSDictionary") {
       output += "return res.toDictionary()";
       output += " as" + asSymbol + " " + blockRetType;
     }
@@ -507,7 +519,7 @@ string Meta::MethodMeta::builtName() {
   std::string selector = this->name;
   std::vector<std::string> selectorTokens;
   std::string prefix = "";
-
+  
   if (this->name.substr(0, 4) != "init") {
     StringUtils::split(selector, ':', back_inserter(selectorTokens));
   }
@@ -565,7 +577,7 @@ string Meta::MethodMeta::builtName() {
       // remove e.g. "URLWith"
       token = token.substr(moduleName.size() + 4);
     }
-
+    
     output += token;
   }
   
