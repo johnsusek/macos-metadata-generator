@@ -1,5 +1,6 @@
 #include "TypeEntities.h"
 #include "MetaEntities.h"
+#include "JSExport/JSExportDefinitionWriter.h"
 #include <regex>
 
 using namespace std;
@@ -18,7 +19,7 @@ static map<string, string> bridgeNames = {
   { "double", "Double" },
   { "size_t", "Int32st" },
   { "NSUInteger", "Int" },
-  { "unsigned int", "UInt" },
+  { "unsigned int", "UInt32" },
   { "uint32_t", "UInt32" },
   { "int32_t", "Int32it" },
   { "uint64_t", "UInt64" },
@@ -27,7 +28,9 @@ static map<string, string> bridgeNames = {
   { "CFStringRef", "CFString" },
   { "CMClockRef", "CMClock" },
   { "OpaqueCMClock", "CMClock" },
-  { "NSConnection", "NSXPCConnection" }
+  { "NSConnection", "NSXPCConnection" },
+  { "NSUnitInformationStorage", "UnitInformationStorage" },
+  { "NSStringEncoding", "UInt" }
 };
 
 map<string, string> Type::apiNotes = {};
@@ -60,9 +63,9 @@ bool Type::populateModule(string moduleName)
   
   try {
     notes = YAML::LoadFile(apiNotesPath);
-    //    cout << "Loaded API notes for " << moduleName << endl;
+    cerr << "Loaded API notes for " << moduleName << endl;
   } catch (...) {
-    //    cout << "! Could not find apinotes for " << moduleName << endl;
+    cerr << "Could not find apinotes for " << moduleName << endl;
   }
   
   if (notes["Name"]) {
@@ -226,6 +229,7 @@ string Type::formatTypePointer(const PointerType& pointerType, const clang::Qual
   string pointerQualTypeName = pointerQualType.getAsString();
   string name = pointerQualTypeName;
   stripModifiersFromPointerType(name);
+  
   name = renamedName(name);
   
   bool hasPointerSymbol = pointerQualTypeName.find('*') != std::string::npos;
@@ -269,7 +273,7 @@ string Type::formatTypePointer(const PointerType& pointerType, const clang::Qual
     }
     else {
       regex autoreleasingRe("^\\w+<\\w+,id>$");
-      string nullableSuffix = " * _Nullable * _Nullable";
+      string nullableSuffix = " _Nullable * _Nullable";
       
       if (regex_match(name, autoreleasingRe)) {
         out += "Autoreleasing";
@@ -312,8 +316,11 @@ string Type::formatTypePointer(const PointerType& pointerType, const clang::Qual
   else if (name.substr(0, 13) == "NSDictionary<") {
     out += "NSDictionary";
   }
+  else if (pointerQualTypeName == "id  _Nullable * _Nullable") {
+    out += "AnyClass";
+  }
   else {
-    out += nameForJSExport(name);
+    out += nameForJSExport(renamedName(name));
   }
   
   regex nullableRegex(".* _Nullable$");
@@ -343,7 +350,7 @@ string Type::formatTypeInterface(const Type& type, const clang::QualType pointer
   
   string pointerQualTypeStr = pointerQualType.getAsString();
   const InterfaceMeta& interface = type.is(TypeType::TypeInterface) ? *type.as<InterfaceType>().interface : *type.as<BridgedInterfaceType>().bridgedInterface;
-  string interfaceName = Type::nameForJSExport(renamedName(interface.jsName));
+  string interfaceName = nameForJSExport(renamedName(interface.jsName));
   
   if (type.hasClosedGenerics()) {
     const InterfaceType& interfaceType = type.as<InterfaceType>();
@@ -513,6 +520,9 @@ string Type::formatType(const Type& type, const clang::QualType pointerType, con
       if (pointerTypeStr == "NSUInteger * _Nonnull") {
         typeStr = "UnsafeMutablePointer<Int>";
       }
+      else if (pointerTypeStr == "NSStringEncoding") {
+        typeStr = "UInt";
+      }
       else {
         typeStr = "Int";
       }
@@ -541,7 +551,7 @@ string Type::formatType(const Type& type, const clang::QualType pointerType, con
       typeStr = "Selector";
       break;
     case TypeUnichar:
-      typeStr = "String /* TypeUnichar */ ";
+      typeStr = "unichar";
       break;
     case TypeCString: {
       string pointerTypeStr = pointerType.getAsString();
@@ -644,7 +654,16 @@ string Type::writeFunctionProto(const vector<Type*>& signature)
   output << "(";
   
   for (size_t i = 1; i < signature.size(); i++) {
-    output << "p" << i << ": " << tsifyType(*signature[i]);
+    string retType = tsifyType(*signature[i]);
+
+    bool isProtoClass = TypeScript::JSExportDefinitionWriter::overlaidClasses.find(retType) != TypeScript::JSExportDefinitionWriter::overlaidClasses.end();
+    
+    // swift overlay classes
+    if (isProtoClass) {
+      retType = "NS" + retType;
+    }
+
+    output << "p" << i << ": " << retType;
     if (i < signature.size() - 1) {
       output << ", ";
     }
@@ -762,7 +781,15 @@ string Type::tsifyType(const Type& type, const bool isFuncParam, const bool forC
       if (isArray) {
         if (hasClosed) {
           string arrayType = tsifyType(*interfaceType.typeArguments[0]);
-          output << renamedName(arrayType) << "[]";
+          arrayType = renamedName(arrayType);
+          bool isProtoClass = TypeScript::JSExportDefinitionWriter::overlaidClasses.find(arrayType) != TypeScript::JSExportDefinitionWriter::overlaidClasses.end();
+          
+          // swift overlay classes
+          if (isProtoClass) {
+            arrayType = "NS" + arrayType;
+          }
+
+          output << arrayType << "[]";
         }
         else {
           output << "any[]";
@@ -772,9 +799,21 @@ string Type::tsifyType(const Type& type, const bool isFuncParam, const bool forC
         output << interfaceName;
         if (interfaceType.typeArguments.size() == 2) {
           output << "<";
-          output << tsifyType(*interfaceType.typeArguments[0]);
+          
+          string genType1 = tsifyType(*interfaceType.typeArguments[0]);
+          string genType2 = tsifyType(*interfaceType.typeArguments[1]);
+
+          // swift overlay classes
+          if (TypeScript::JSExportDefinitionWriter::overlaidClasses.find(genType1) != TypeScript::JSExportDefinitionWriter::overlaidClasses.end()) {
+            genType1 = "NS" + genType1;
+          }
+          if (TypeScript::JSExportDefinitionWriter::overlaidClasses.find(genType2) != TypeScript::JSExportDefinitionWriter::overlaidClasses.end()) {
+            genType2 = "NS" + genType2;
+          }
+
+          output << genType1;
           output << ", ";
-          output << tsifyType(*interfaceType.typeArguments[1]);
+          output << genType2;
           output << ">";
         }
         else {

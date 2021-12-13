@@ -77,6 +77,7 @@ private:
   static std::string writeMethodComputed(Meta::MethodMeta* method, Meta::BaseClassMeta* owner);
   static std::string writeProperty(Meta::PropertyMeta* meta, Meta::BaseClassMeta* owner, bool optOutTypeChecking);
   static std::string writePropertyComputed(Meta::PropertyMeta* meta, Meta::BaseClassMeta* owner);
+  static std::unordered_set<std::string> classesToWrite;
 
   std::unordered_set<std::string> _importedModules;
   std::ostringstream _buffer;

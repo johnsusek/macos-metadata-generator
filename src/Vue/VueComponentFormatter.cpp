@@ -20,9 +20,11 @@ map<string, bool> VueComponentFormatter::nativeTypes = {
   { "object", true },
   { "array", true },
   { "number", true },
+  { "Number", true },
   { "String", true },
   { "string", true },
-  { "boolean", true }
+  { "boolean", true },
+  { "Boolean", true }
 };
 
 string VueComponentFormatter::vuePropifyTypeName(const string& jsName)

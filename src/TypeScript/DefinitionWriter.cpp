@@ -34,6 +34,8 @@ static unordered_set<string> hiddenMethods = {
   "allocWithZone",
   "zone",
   "string",
+  "createWithNibName_Bundle",
+  "prototype",
   "countByEnumeratingWithStateObjectsCount",
   "create"
 };
@@ -197,6 +199,13 @@ string DefinitionWriter::jsifySwiftTypeName(const string& jsName)
     return jsNames[jsName];
   }
   
+  bool isProtoClass = JSExportDefinitionWriter::overlaidClasses.find(jsName) != JSExportDefinitionWriter::overlaidClasses.end();
+  
+  // swift overlay classes
+  if (isProtoClass) {
+    return "NS" + jsName;
+  }
+
   return jsName;
 }
 
@@ -447,7 +456,7 @@ string DefinitionWriter::getInstanceParamsStr(MethodMeta* method, BaseClassMeta*
     // Param return type
     const Type* pType = method->signature[i+1];
     
-    string returnType = Type::tsifyType(*pType);
+    string returnType = Type::tsifyType(*pType, false, true);
     returnType = jsifySwiftTypeName(returnType);
     
     // TODO: fix these properly
@@ -552,11 +561,6 @@ void DefinitionWriter::visit(InterfaceMeta* meta)
   
   string metaName = meta->jsName;
   
-//  // TODO: Need to separate into ES6 modules to prevent overlaps like this
-//  if (metaName == "Port" && meta->module->getTopLevelModule()->Name == "AVFoundation") {
-//    return;
-//  }
-  
   if (metaName == "Set" || metaName == "String" || metaName == "NSObject" || metaName == "NSSimpleCString" ||
       metaName == "Date" || metaName == "Error" || metaName == "Array" || metaName == "NSMutableString") {
     return;
@@ -571,6 +575,12 @@ void DefinitionWriter::visit(InterfaceMeta* meta)
   if (metaNameTokens.size() == 2) {
     containerName = metaNameTokens[0];
     metaName = metaNameTokens[1];
+  }
+  
+  bool isProtoClass = JSExportDefinitionWriter::overlaidClasses.find(meta->jsName) != JSExportDefinitionWriter::overlaidClasses.end();
+
+  if (isProtoClass) {
+    metaName = meta->name;
   }
   
   string parametersString = getTypeParametersStringOrEmpty(clang::cast<clang::ObjCInterfaceDecl>(meta->declaration));
@@ -853,7 +863,9 @@ void DefinitionWriter::visit(InterfaceMeta* meta)
   
   out << "}" << endl << endl;
   
-  if (containerName != metaName) {
+  out << "export function " << metaName << parametersString << "(args?: any): " << metaName << parametersString << ";" << endl << endl;
+  
+  if (containerName != metaName && !isProtoClass) {
     namespaceClasses[containerName].push_back(out.str());
     return;
   }
@@ -1183,6 +1195,10 @@ string DefinitionWriter::writeMethod(MethodMeta* method, BaseClassMeta* owner, b
     ownerGenerics = getTypeParameterNames(clang::cast<clang::ObjCInterfaceDecl>(static_cast<const InterfaceMeta*>(owner)->declaration));
   }
   
+  if (owner->jsName == "NSWorkspace" && method->jsName == "duplicate") {
+    cout << "";
+  }
+  
   transform(parameters.begin(), parameters.end(), back_inserter(parameterNames), [](clang::ParmVarDecl* param) {
     return param->getNameAsString();
   });
@@ -1235,9 +1251,6 @@ string DefinitionWriter::writeMethod(MethodMeta* method, BaseClassMeta* owner, b
   
   ostringstream output;
   
-  const Type* retType = method->signature[0];
-  string returnType = computeMethodReturnType(retType, owner, canUseThisType);
-  
   // For some reason, has different params than the method it is overriding
   if (owner->jsName == "NSMenuItemCell") {
     if (method->builtName() == "drawImageWithFrameInView" ||
@@ -1284,6 +1297,10 @@ string DefinitionWriter::writeMethod(MethodMeta* method, BaseClassMeta* owner, b
     output << "// @ts-ignore \n  ";
   }
   
+  const Type* retType = method->signature[0];
+  string returnType = computeMethodReturnType(retType, owner, canUseThisType);
+  returnType = jsifySwiftTypeName(returnType);
+  
   if (method->getFlags(MethodIsInitializer)) {
     // TODO: Fix string comparison, use hasClosedGenerics() instead
     if (returnType.find("<") != string::npos) {
@@ -1320,6 +1337,7 @@ string DefinitionWriter::writeMethod(MethodMeta* method, BaseClassMeta* owner, b
   }
   
   string paramsString = getInstanceParamsStr(method, owner);
+  
   output << paramsString << ": ";
   
   // Method return type
@@ -1328,16 +1346,14 @@ string DefinitionWriter::writeMethod(MethodMeta* method, BaseClassMeta* owner, b
     returnType = "NSFetchRequest<any>";
   }
   
-  output << returnType;
+  bool isProtoClass = JSExportDefinitionWriter::overlaidClasses.find(returnType) != JSExportDefinitionWriter::overlaidClasses.end();
   
-  //  if (
-  //      (owner->type == MetaType::Protocol &&
-  //       methodDecl.getImplementationControl() == clang::ObjCMethodDecl::ImplementationControl::Optional)
-  //      ||
-  //      (owner->is(MetaType::Protocol) && method->getFlags(MethodIsInitializer))
-  //     ) {
-  //    output << "?";
-  //  }
+  // swift overlay classes
+  if (isProtoClass) {
+    returnType = "NS" + returnType;
+  }
+
+  output << returnType;
   
   output << ";";
   
@@ -1405,12 +1421,16 @@ string DefinitionWriter::writeProperty(PropertyMeta* meta, BaseClassMeta* owner,
   const Type* retType = meta->getter->signature[0];
   string returnType = computeMethodReturnType(retType, owner);
   
-  output << jsifySwiftTypeName(returnType);
+  returnType = jsifySwiftTypeName(returnType);
   
+  output << returnType;
   output << ";";
   
   if (meta->setter && !meta->setter->jsName.empty()) {
     string setterName = meta->setter->name;
+    if (setterName == "setQueryItems") {
+      cout << "";
+    }
     setterName.pop_back();
     
     // Write setter too

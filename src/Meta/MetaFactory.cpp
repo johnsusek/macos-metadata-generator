@@ -724,6 +724,9 @@ void MetaFactory::populateIdentificationFields(const clang::NamedDecl& decl, Met
     meta.argLabels = nameParts;
   }
   
+//  std::regex re("^URL");
+//  meta.jsName = std::regex_replace(meta.jsName, re, "NSURL");
+  
   // We allow anonymous categories to be created. There is no need for categories to be named
   // because we don't keep them as separate entity in metadata. They are merged in their interfaces
   if (!meta.is(MetaType::Category)) {

@@ -34,11 +34,61 @@ static unordered_set<string> hiddenMethods = {
   "self",
   "zone",
   "class",
-  "subscript"
+  "createWithCoder",
+  "subscript",
+  "errorWithDomain",
+  "createWithRoundingMode",
+  "createWithLeftExpression",
+  "createWithDescriptorType",
+  "createByResolvingBookmarkData"
+};
+
+static unordered_set<string> hiddenNames = {
+  "registerClass:forItemWithIdentifier:",
+  "registerClass:forSupplementaryViewOfKind:withIdentifier:",
+  "URLByResolvingAliasFileAtURL:options:error:",
+  "URLByResolvingBookmarkData:options:relativeToURL:bookmarkDataIsStale:error:",
+  "launchAppWithBundleIdentifier:options:additionalEventParamDescriptor:launchIdentifier:",
+  "getFileSystemInfoForPath:isRemovable:isWritable:isUnmountable:description:type:",
+  "dataTaskWithRequest:completionHandler:",
+  "downloadTaskWithRequest:completionHandler:",
+  "openURLs:withAppBundleIdentifier:options:additionalEventParamDescriptor:launchIdentifiers:",
+  "getTasksWithCompletionHandler:",
+  "getObjectValue:forString:errorDescription:"
+};
+
+unordered_set<string> JSExportDefinitionWriter::writeInstanceInits = {
+  "NSWindow",
+  "NSImage",
+  "NSString"
+};
+
+unordered_set<string> JSExportDefinitionWriter::writeMethodImpls = {
+  "NSLayoutAnchor",
+  "NSLayoutConstraint",
+  "URLSessionWebSocketTask",
+  "URLSession"
+};
+
+// Swift overlays certain framework classes, but when you try to extend them you get
+// the error "extension of protocol 'Error' cannot have an inheritance clause",
+// using the original name fixes this
+unordered_set<string> JSExportDefinitionWriter::overlaidClasses = {
+  "Error",
+  "URL",
+  "URLQueryItem",
+  "URLComponents",
+  "URLCredential",
+  "URLProtectionSpace",
+  "URLRequest",
+  "URLSessionTaskTransactionMetrics",
+  "URLSessionWebSocketMessage"
 };
 
 unordered_set<string> JSExportDefinitionWriter::hiddenClasses = {
-  "Protocol"
+  "Protocol",
+  "NSString",
+  "NSData"
 };
 
 static unordered_set<string> anyObjectProps = {
@@ -307,14 +357,14 @@ string JSExportDefinitionWriter::writeMethod(MethodMeta* method, BaseClassMeta* 
   output << "func ";
   
   string methodParams;
-
+  
   if (method->isInit()) {
     output << ::Meta::sanitizeIdentifierForSwift(method->builtName());
     methodParams = method->getParamsAsString(owner, ParamCallType::Implementation);
   }
   else if (method->getParamsAsString(owner).find("JSValue") != string::npos) {
-    output << ::Meta::sanitizeIdentifierForSwift(method->builtName());
-    methodParams = method->getParamsAsString(owner, ParamCallType::Implementation);
+    output << ::Meta::sanitizeIdentifierForSwift(method->jsName);
+    methodParams = method->getParamsAsString(owner);
   }
   else {
     output << ::Meta::sanitizeIdentifierForSwift(method->jsName);
@@ -323,9 +373,14 @@ string JSExportDefinitionWriter::writeMethod(MethodMeta* method, BaseClassMeta* 
   
   // Don't have clang::Qualifiers::OCL_Autoreleasing?
   static unordered_set<string> autoreleasingMethods = {
+    "getObjectValue:forString:errorDescription:",
+    "isPartialStringValid:proposedSelectedRange:originalString:originalSelectedRange:errorDescription:",
+    "isPartialStringValid:newEditingString:errorDescription:",
     "getResourceValue:forKey:error:",
     "getPromisedItemResourceValue:forKey:error:",
     "smartInsertForString:replacingRange:beforeString:afterString:",
+    "getFileSystemInfoForPath:isRemovable:isWritable:isUnmountable:description:type:",
+    "getInfoForFile:application:type:"
   };
 
   if (autoreleasingMethods.find(method->getSelector()) != autoreleasingMethods.end()) {
@@ -426,45 +481,6 @@ const char * viewOverrides = R"__literal(
   })__literal";
 
 void JSExportDefinitionWriter::writeExtension(string protocolName, InterfaceMeta* meta, CompoundMemberMap<MethodMeta>* staticMethods, CompoundMemberMap<MethodMeta>* instanceMethods) {
-//  bool isViewSubclass = meta->isSubclassOf("NSView");
-//
-//  if (isViewSubclass) {
-//    string viewName = meta->jsName.substr(2);
-//
-//    _buffer << "@objc protocol " + viewName + "Exports: JSExport";
-//
-//    if (meta->base) {
-//      _buffer << ", " << meta->base->jsName << "Exports";
-//    }
-//
-//    _buffer << " {\n";
-//
-//    if (!staticMethods->empty()) {
-//      _buffer << "  // Static Methods\n";
-//
-//      for (auto& methodPair : *staticMethods) {
-//        MethodMeta* method = methodPair.second.second;
-//        BaseClassMeta* owner = methodPair.second.first;
-//
-//        if (!method->isInit()) {
-//          continue;
-//        }
-//
-//        string output = writeMethod(methodPair, meta, {}, "static", meta->jsName);
-//
-//        if (output.size()) {
-//          _buffer << method->dumpDeclComments(meta) << endl;
-//          _buffer << _docSet.getCommentFor(method, owner).toString("");
-//          _buffer << "  " << output << endl;
-//        }
-//      }
-//    }
-//
-//    _buffer << "}\n\n";
-//
-//    writeClass(meta, staticMethods, instanceMethods);
-//  }
-  
   _buffer << "extension " << protocolName << ": " << protocolName << "Exports {\n";
   
   for (auto& methodPair: *staticMethods) {
@@ -488,23 +504,18 @@ void JSExportDefinitionWriter::writeExtension(string protocolName, InterfaceMeta
   for (auto& methodPair: *instanceMethods) {
     MethodMeta* method = methodPair.second.second;
     BaseClassMeta* owner = methodPair.second.first;
-
+  
     if (method->name == "getTasksWithCompletionHandler:") {
       continue;
     }
-
+    
     if (method->isInit()) {
-      if (protocolName == "NSWindow") {
+      if (writeInstanceInits.find(meta->jsName) != writeInstanceInits.end()) {
         writeCreate(method, owner);
       }
-
-      // instance inits don't work atm?
-//      writeCreate(method, owner);
     }
     else if (protocolName != "Set" && methodHasGenericParams(method)) {
-      if (protocolName == "NSLayoutAnchor"
-          || protocolName == "NSLayoutConstraint"
-          || protocolName == "URLSession") {
+      if (writeMethodImpls.find(protocolName) != writeMethodImpls.end()) {
         writeMethodImpl(method, owner);
       }
     }
@@ -520,7 +531,7 @@ void JSExportDefinitionWriter::writeMethodImpl(MethodMeta* method, BaseClassMeta
     _buffer << "  /* ";
   }
 
-  _buffer << method->dumpDeclComments(owner) << endl;
+  _buffer << method->dumpDeclComments() << endl;
   _buffer << "  @objc public ";
   
   if (owner->is(MetaType::Interface)) {
@@ -542,11 +553,12 @@ void JSExportDefinitionWriter::writeMethodImpl(MethodMeta* method, BaseClassMeta
 
   string implName = method->jsName;
   
-  if (method->getParamsAsString(owner).find("JSValue") != string::npos) {
-    implName = method->builtName();
-  }
+//  if (method->getParamsAsString(owner).find("JSValue") != string::npos) {
+//    implName = method->builtName();
+//  }
   
-  auto methodImplParams = method->getParamsAsString(owner, ParamCallType::Implementation);
+//  auto methodImplParams = method->getParamsAsString(owner, ParamCallType::Implementation);
+  auto methodImplParams = method->getParamsAsString(owner);
 
   _buffer << "func " << implName << methodImplParams;
 
@@ -608,7 +620,7 @@ void JSExportDefinitionWriter::writeCreate(MethodMeta* method, BaseClassMeta* ow
     _buffer << "  /* ";
   }
 
-  _buffer << method->dumpDeclComments(owner) << endl;
+  _buffer << method->dumpDeclComments() << endl;
 
   _buffer << "  @objc public ";
 
@@ -681,7 +693,15 @@ void JSExportDefinitionWriter::writeCreate(MethodMeta* method, BaseClassMeta* ow
 //}
 
 void JSExportDefinitionWriter::writeProto(ProtocolMeta* meta) {
-  _buffer << "@objc(" << meta->jsName << ") protocol " << meta->jsName << "Exports: JSExport";
+  string protoName = meta->jsName;
+
+  bool isProtoClass = overlaidClasses.find(meta->jsName) != overlaidClasses.end();
+
+  if (isProtoClass) {
+    protoName = meta->name;
+  }
+
+  _buffer << "@objc(" << protoName << ") protocol " << protoName << "Exports: JSExport";
   
   map<string, PropertyMeta*> conformedProtocolsProperties;
   map<string, MethodMeta*> conformedProtocolsMethods;
@@ -856,6 +876,7 @@ void JSExportDefinitionWriter::visit(ProtocolMeta* meta)
       bool returnsJSValue = regex_match(output, re);
 
       if (returnsJSValue
+          && meta->jsName != "URLSessionWebSocketTask"
           && meta->jsName != "NSLayoutAnchor"
           && meta->jsName != "URLSession") {
         _buffer << "// jsvalue ";
@@ -889,11 +910,11 @@ void JSExportDefinitionWriter::visit(InterfaceMeta* meta)
     if (hiddenMethods.find(method->jsName) != hiddenMethods.end()) {
       continue;
     }
-
-    if (method->jsName == "errorWithDomain") {
+    
+    if (hiddenNames.find(method->name) != hiddenNames.end()) {
       continue;
     }
-    
+
     if (method->hasParamOfType("NSInvocation")) {
       // NSInvocation is totally unsupported in Swift
       continue;
@@ -903,10 +924,6 @@ void JSExportDefinitionWriter::visit(InterfaceMeta* meta)
       if (method->getFlags(MethodReturnsSelf)) {
         continue;
       }
-    }
-    
-    if (method->name == "URLByResolvingBookmarkData:options:relativeToURL:bookmarkDataIsStale:error:") {
-      continue;
     }
     
     if (method->isInit()) {
@@ -929,23 +946,11 @@ void JSExportDefinitionWriter::visit(InterfaceMeta* meta)
   
   CompoundMemberMap<MethodMeta> compoundInstanceMethods;
   for (MethodMeta* method : meta->instanceMethods) {
-    if (method->jsName == "createWithRoundingMode") {
+    if (hiddenMethods.find(method->jsName) != hiddenMethods.end()) {
       continue;
     }
     
-    if (method->jsName == "createWithLeftExpression") {
-      continue;
-    }
-    
-    if (method->jsName == "createWithDescriptorType") {
-      continue;
-    }
-    
-    if (method->jsName == "createByResolvingBookmarkData") {
-      continue;
-    }
-    
-    if (method->name == "getTasksWithCompletionHandler:") {
+    if (hiddenNames.find(method->name) != hiddenNames.end()) {
       continue;
     }
     
@@ -982,8 +987,8 @@ void JSExportDefinitionWriter::visit(InterfaceMeta* meta)
     
     // skip instance inits
     if (method->isInit()) {
-      if (meta->jsName != "NSWindow") {
-        cerr << "Skipping instance init " << method->name << endl;
+      if (writeInstanceInits.find(meta->jsName) == writeInstanceInits.end()) {
+        //        cout << "Skipping instance init " << method->name << endl;
         continue;
       }
     }
@@ -1083,8 +1088,13 @@ void JSExportDefinitionWriter::visit(InterfaceMeta* meta)
         continue;
       }
       
-      // TODO: Temp during dev
-      if (proto.jsName != "NSUserInterfaceItemIdentification" && proto.jsName != "NSObjectProtocol") {
+      static unordered_set<string> implementedProtos = {
+        "NSUserInterfaceItemIdentification",
+        "NSTableViewDelegate",
+        "NSObjectProtocol"
+      };
+      
+      if (implementedProtos.find(proto.jsName) == implementedProtos.end()) {
         continue;
       }
       
@@ -1109,13 +1119,14 @@ void JSExportDefinitionWriter::visit(InterfaceMeta* meta)
 
   _buffer << "\n// Interface \n";
   
-  _buffer << meta->dumpDeclComments(meta) << endl << endl;
+  _buffer << meta->dumpDeclComments() << endl << endl;
   _buffer << _docSet.getCommentFor(meta).toString("");
   
   string protocolName = meta->jsName;
   
-  // Fix "extension of protocol 'Error' cannot have an inheritance clause"
-  if (meta->jsName == "Error" || meta->jsName == "URL") {
+  bool isProtoClass = overlaidClasses.find(meta->jsName) != overlaidClasses.end();
+  
+  if (isProtoClass) {
     protocolName = meta->name;
   }
   
@@ -1143,7 +1154,7 @@ void JSExportDefinitionWriter::visit(InterfaceMeta* meta)
       string output = writeMethod(methodPair, meta, immediateProtocols, "static", metaName);
       
       if (output.size()) {
-        _buffer << method->dumpDeclComments(meta) << endl;
+        _buffer << method->dumpDeclComments() << endl;
         _buffer << _docSet.getCommentFor(method, owner).toString("");
 
         regex re(".*JSValue.*");
@@ -1151,6 +1162,7 @@ void JSExportDefinitionWriter::visit(InterfaceMeta* meta)
         
         if (returnsJSValue
             && meta->jsName != "NSLayoutAnchor"
+            && meta->jsName != "URLSessionWebSocketTask"
             && meta->jsName != "URLSession") {
           _buffer << "// jsvalue ";
         }
@@ -1187,7 +1199,7 @@ void JSExportDefinitionWriter::visit(InterfaceMeta* meta)
         continue;
       }
       
-      _buffer << propertyMeta->dumpDeclComments(meta) << endl;
+      _buffer << propertyMeta->dumpDeclComments() << endl;
       
       if (propertyMeta->unavailable) {
         _buffer << "  // ";
@@ -1211,7 +1223,7 @@ void JSExportDefinitionWriter::visit(InterfaceMeta* meta)
       string output = writeMethod(methodPair, meta, immediateProtocols, method->isInit() ? "static" : "", metaName);
       
       if (output.size()) {
-        _buffer << method->dumpDeclComments(meta) << endl;
+        _buffer << method->dumpDeclComments() << endl;
         _buffer << "  ";
         _buffer << _docSet.getCommentFor(methodPair.second.second, methodPair.second.first).toString("  ");
 
@@ -1220,6 +1232,7 @@ void JSExportDefinitionWriter::visit(InterfaceMeta* meta)
         
         if (returnsJSValue
             && meta->jsName != "NSLayoutAnchor"
+            && meta->jsName != "URLSessionWebSocketTask"
             && meta->jsName != "URLSession") {
           _buffer << "// jsvalue ";
         }
@@ -1238,7 +1251,7 @@ void JSExportDefinitionWriter::visit(InterfaceMeta* meta)
       
       bool isDuplicated = ownInstanceProperties.find(propertyMeta->jsName) != ownInstanceProperties.end();
       if (immediateProtocols.find(reinterpret_cast<ProtocolMeta*>(owner)) != immediateProtocols.end() && !isDuplicated) {
-        _buffer << propertyMeta->dumpDeclComments(meta) << endl;
+        _buffer << propertyMeta->dumpDeclComments() << endl;
         
         if (propertyMeta->unavailable) {
           _buffer << "// ";
@@ -1260,7 +1273,7 @@ void JSExportDefinitionWriter::visit(InterfaceMeta* meta)
         continue;
       }
       
-      _buffer << propertyMeta->dumpDeclComments(meta) << endl;
+      _buffer << propertyMeta->dumpDeclComments() << endl;
       
       if (propertyMeta->unavailable) {
         _buffer << "// unavailable ";
@@ -1281,6 +1294,11 @@ void JSExportDefinitionWriter::visit(CategoryMeta* meta)
 
 void JSExportDefinitionWriter::visit(FunctionMeta* meta)
 {
+  if (meta->module->Name == "Dispatch") {
+    cout << "FunctionMeta: " << meta->module->Name << ": " << meta->name << endl;
+  }
+  _buffer << meta->dumpDeclComments() << endl;
+  _buffer << "// " << meta->name << endl;
 }
 
 void JSExportDefinitionWriter::visit(StructMeta* meta)
@@ -1297,10 +1315,16 @@ void JSExportDefinitionWriter::visit(EnumMeta* meta)
 
 void JSExportDefinitionWriter::visit(VarMeta* meta)
 {
+  if (meta->module->Name == "Dispatch") {
+    cout << "VarMeta: " << meta->module->Name << ": " << meta->name << endl;
+  }
 }
 
 void JSExportDefinitionWriter::visit(MethodMeta* meta)
 {
+  if (meta->module->Name == "Dispatch") {
+    cout << "MethodMeta: " << meta->module->Name << ": " << meta->name << endl;
+  }
 }
 
 void JSExportDefinitionWriter::visit(PropertyMeta* meta)
@@ -1321,17 +1345,25 @@ string JSExportDefinitionWriter::write()
     
     bool isNotHidden = hiddenClasses.find(meta->jsName) == hiddenClasses.end();
     
-    if ((meta->is(MetaType::Interface) || meta->is(MetaType::Protocol)) && isNotHidden) {
+    if ((meta->is(MetaType::Interface) || meta->is(MetaType::Protocol))
+        && isNotHidden
+        && meta->name != "NSResponder"
+        && meta->name != "NSColor"
+        && meta->name != "NSURLSession"
+        && meta->name != "NSURLSessionTask"
+        && meta->name != "NSURLSessionWebSocketTask") {
       string filename = meta->jsName + ".swift";
       
-      if (meta->jsName == "Error" || meta->jsName == "URL") {
+      bool isProtoClass = overlaidClasses.find(meta->jsName) != overlaidClasses.end();
+
+      if (isProtoClass) {
         filename = meta->name + ".swift";
       }
       
       if (filename.substr(0, 3) == "URL") {
         filename = "NS" + filename;
       }
-
+      
       writeJSExport(filename, meta, _module.first->Name);
     }
 

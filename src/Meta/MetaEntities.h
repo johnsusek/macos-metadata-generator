@@ -214,7 +214,7 @@ public:
     }
     
     bool getUnavailableInSwift(Meta* owner);
-    std::string dumpDeclComments(Meta* owner);
+    std::string dumpDeclComments();
 
     template <class T>
     const T& as() const

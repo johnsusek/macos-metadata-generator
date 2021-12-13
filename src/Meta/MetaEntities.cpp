@@ -128,24 +128,23 @@ unordered_set<string> nonNullable = {
   { "TimeInterval" }
 };
 
+unordered_set<string> dontRename = {
+  { "NSDecimal" },
+  { "NSArray" },
+  { "NSString" },
+  { "NSData" },
+//  { "NSDate" },
+//  { "NSError" },
+//  { "NSURL" },
+//  { "NSDecimalNumber" }
+};
+
 // MARK: - Meta
 
 string Meta::renamedName(string name, string ownerKey) {
   string key = name;
 
-  if (name == "NSDecimal") {
-    return name;
-  }
-  
-  if (name == "NSArray") {
-    return name;
-  }
-  
-  if (name == "NSString") {
-    return name;
-  }
-  
-  if (name == "NSDecimalNumber") {
+  if (dontRename.find(name) != dontRename.end()) {
     return name;
   }
 
@@ -371,20 +370,21 @@ bool Meta::Meta::getUnavailableInSwift(::Meta::Meta* owner) {
   
   auto key = ownerKey + "." + this->name;
 
+  auto attributes = Type::attributesLookup[key];
+  
   // attr lookups use the selector (this->name)
-  for (auto attribute: Type::attributesLookup[key]) {
-    auto key = attribute.first.as<string>();
-    auto value = attribute.second.as<string>();
-
-    if (key == "deprecated") {
-      if (value != "100000") {
+  if (attributes["deprecated"] != NULL) {
+    if (attributes["deprecated"].as<string>() == "100000") {
+//      if (attributes["message"] != NULL) {
         return true;
-      }
+//      }
+//      return false;
     }
+    return true;
+  }
 
-    if (key == "unavailable") {
-      return true;
-    }
+  if (attributes["unavailable"] != NULL) {
+    return true;
   }
 
   vector<clang::AvailabilityAttr*> availabilityAttributes = ::Meta::Utils::getAttributes<clang::AvailabilityAttr>(*this->declaration);
@@ -397,6 +397,12 @@ bool Meta::Meta::getUnavailableInSwift(::Meta::Meta* owner) {
     }
 
     if (availability->getUnavailable()) {
+      return true;
+    }
+    if (!availability->getObsoleted().empty()) {
+      return true;
+    }
+    if (!availability->getReplacement().empty()) {
       return true;
     }
   }
@@ -412,11 +418,19 @@ bool Meta::Meta::getUnavailableInSwift(::Meta::Meta* owner) {
   if (key == "Process.launchAndReturnError:") {
     return true;
   }
-
+  
+  if (key == "launchAppWithBundleIdentifier:options:additionalEventParamDescriptor:launchIdentifier:") {
+    return true;
+  }
+  
+  if (key == "getFileSystemInfoForPath:isRemovable:isWritable:isUnmountable:description:type:") {
+    return true;
+  }
+  
   return false;
 }
 
-string Meta::Meta::dumpDeclComments(::Meta::Meta* owner) {
+string Meta::Meta::dumpDeclComments() {
   string out;
   
   out += "\n  /**\n";
@@ -487,8 +501,13 @@ string Meta::Meta::dumpDeclComments(::Meta::Meta* owner) {
 bool Meta::InterfaceMeta::isSubclassOf(std::string superclass) {
   bool stop = false;
   bool isSuperclass = false;
-  auto base = this->base;
 
+  if (!this) {
+    return isSuperclass;
+  }
+
+  auto base = this->base;
+  
   while (stop == false) {
     if (base && base != NULL && base != nullptr) {
       if (base->jsName == superclass) {
@@ -521,31 +540,44 @@ string Meta::MethodMeta::builtName() {
   std::string prefix = "";
   
   if (this->name.substr(0, 4) != "init") {
-    StringUtils::split(selector, ':', back_inserter(selectorTokens));
+    if (this->argLabels.size() && !(this->argLabels.size() == 1 && this->argLabels[0] == "_")) {
+      selectorTokens = this->argLabels;
+      if (!this->isInit()) {
+        selectorTokens.insert(selectorTokens.begin(), this->jsName);
+      }
+    }
+    else {
+      StringUtils::split(selector, ':', back_inserter(selectorTokens));
+    }
   }
   else if (this->constructorTokens.size()) {
     selectorTokens = this->constructorTokens;
   }
-  else if (this->argLabels.size()
-           && !(this->argLabels.size() == 1 && this->argLabels[0] == "_")) {
+  else if (this->argLabels.size() && !(this->argLabels.size() == 1 && this->argLabels[0] == "_")) {
     selectorTokens = this->argLabels;
+    selectorTokens.insert(selectorTokens.begin(), this->jsName);
   }
   else if (selector.length()) {
     StringUtils::split(selector, ':', back_inserter(selectorTokens));
   }
-    
+
+  size_t numTokens = this->hasTargetAction() ? selectorTokens.size() - 2 : selectorTokens.size();
+
   if (this->getFlags(MetaFlags::MethodHasErrorOutParameter)) {
-    selectorTokens.pop_back();
+    if (numTokens > 0) {
+      selectorTokens.pop_back();
+    }
   }
   
   size_t idx = 0;
-  size_t numTokens = this->hasTargetAction() ? selectorTokens.size() - 2 : selectorTokens.size();
   
   string moduleName = this->module->Name;
   regex frameworkPrefixes("^(NS|AV|IK)");
   string moduleNameNoPrefix = regex_replace(moduleName, frameworkPrefixes, "");
   size_t withOffset = 0;
-  
+  regex cbPrefixes("CompletionHandler$");
+  regex createSep("With");
+
   if (numTokens > 1 && selectorTokens[0] == this->jsName) {
     withOffset = 1;
   }
@@ -558,10 +590,14 @@ string Meta::MethodMeta::builtName() {
 
     token[0] = toupper(token[0]);
 
-    if (idx > withOffset &&
-        token.substr(0, 4) != "With" &&
-        selectorTokens[i-1] != "with") {
-      output += "With";
+    
+    if (idx > withOffset) {
+      if (this->isInit()) {
+        output += "_";
+      }
+      else if (token.substr(0, 4) != "With" && selectorTokens[i-1] != "with") {
+        output += "With";
+      }
     }
 
     idx++;
@@ -576,6 +612,16 @@ string Meta::MethodMeta::builtName() {
     if (token.substr(0, moduleName.size() + 4) == moduleName + "With") {
       // remove e.g. "URLWith"
       token = token.substr(moduleName.size() + 4);
+    }
+    
+    if (token == "CompletionHandler") {
+      token = "Callback";
+    }
+    
+    token = regex_replace(token, cbPrefixes, "Callback");
+
+    if (this->isInit()) {
+      token = regex_replace(token, createSep, "_");
     }
     
     output += token;
@@ -707,7 +753,17 @@ string Meta::MethodMeta::getParamsAsString(BaseClassMeta* owner, ParamCallType c
       }
     }
     else if (idxToLookForName < this->argLabels.size()) {
-      paramName = this->argLabels[idxToLookForName];
+      if (this->getFlags(::Meta::MetaFlags::MethodHasErrorOutParameter)) {
+        if (i == 0) {
+          paramName = parmVar.getNameAsString();
+        }
+        else {
+          paramName = this->argLabels[i - 1];
+        }
+      }
+      else {
+        paramName = this->argLabels[idxToLookForName];
+      }
     }
     
     // Manual fixes for create fns whose renamed params
@@ -831,18 +887,24 @@ string Meta::MethodMeta::getParamsAsString(BaseClassMeta* owner, ParamCallType c
       }
     }
     else if (callType == Implementation) {
-      if (this->isInit()) {
+//      if (this->isInit()) {
         output += "_ " + sanitizeIdentifierForSwift(paramName);
-      }
-      else if (paramLabel == paramName) {
-        output += sanitizeIdentifierForSwift(paramLabel);
-      }
-      else {
-        output += sanitizeIdentifierForSwift(paramLabel) + " " + sanitizeIdentifierForSwift(paramName);
-      }
+//      }
+//      else
+//      if (paramLabel == paramName) {
+//        output += sanitizeIdentifierForSwift(paramLabel);
+//      }
+//      else {
+//        output += sanitizeIdentifierForSwift(paramLabel) + " " + sanitizeIdentifierForSwift(paramName);
+//      }
     }
     else if (callType == Definition) {
-      output += sanitizeIdentifierForSwift(paramLabel);
+      if (paramLabel == "_") {
+        output += "_ p" + std::to_string(i);
+      }
+      else {
+        output += sanitizeIdentifierForSwift(paramLabel);
+      }
     }
     
     if (callType != Call) {

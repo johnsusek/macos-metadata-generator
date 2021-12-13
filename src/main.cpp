@@ -95,18 +95,18 @@ public:
 //    }
 
     // Serialize Meta objects to Yaml
-//    if (!cla_outputYamlFolder.empty()) {
-//      if (!llvm::sys::fs::exists(cla_outputYamlFolder)) {
-//        DEBUG_WITH_TYPE("yaml", llvm::dbgs() << "Creating YAML output directory: " << cla_outputYamlFolder << "\n");
-//        llvm::sys::fs::create_directories(cla_outputYamlFolder);
-//      }
-//
-//      for (pair<clang::Module*, vector<Meta::Meta*> >& modulePair : metasByModules) {
-//        string yamlFileName = modulePair.first->getFullModuleName() + ".yaml";
-//        DEBUG_WITH_TYPE("yaml", llvm::dbgs() << "Generating: " << yamlFileName << "\n");
-//        Yaml::YamlSerializer::serialize<pair<clang::Module*, vector<Meta::Meta*> > >(cla_outputYamlFolder + "/" + yamlFileName, modulePair);
-//      }
-//    }
+    if (!cla_outputYamlFolder.empty()) {
+      if (!llvm::sys::fs::exists(cla_outputYamlFolder)) {
+        DEBUG_WITH_TYPE("yaml", llvm::dbgs() << "Creating YAML output directory: " << cla_outputYamlFolder << "\n");
+        llvm::sys::fs::create_directories(cla_outputYamlFolder);
+      }
+
+      for (pair<clang::Module*, vector<Meta::Meta*> >& modulePair : metasByModules) {
+        string yamlFileName = modulePair.first->getFullModuleName() + ".yaml";
+        DEBUG_WITH_TYPE("yaml", llvm::dbgs() << "Generating: " << yamlFileName << "\n");
+        Yaml::YamlSerializer::serialize<pair<clang::Module*, vector<Meta::Meta*> > >(cla_outputYamlFolder + "/" + yamlFileName, modulePair);
+      }
+    }
 
     // Serialize Meta objects to binary metadata
 //    if (!cla_outputBinFile.empty()) {

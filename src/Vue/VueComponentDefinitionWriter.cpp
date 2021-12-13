@@ -165,11 +165,8 @@ void VueComponentDefinitionWriter::visit(InterfaceMeta* meta)
   
   _buffer << "  },\n\n";
   
-  _buffer << "  computed: {\n";
-  _buffer << "    attrs() {\n";
-  _buffer << "      let attrs: any = {};\n\n";
-  _buffer << "      let types = {\n";
-
+  _buffer << "  types: {\n";
+  
   //
   // Write computed attrs (e.g. enum values from vue prop string)
   //
@@ -218,24 +215,6 @@ void VueComponentDefinitionWriter::visit(InterfaceMeta* meta)
     }
   }
 
-  _buffer << "      };\n\n";
-  
-  _buffer << "      for (const [propName, propType] of Object.entries(types)) {\n";
-  _buffer << "        if (this[propName] !== undefined) {\n";
-  _buffer << "          attrs[propName] = propType[this[propName]];\n";
-  _buffer << "        }\n";
-  _buffer << "      }\n\n";
-
-  _buffer << "      return { ...this.$props, ...this.$attrs, ...attrs };\n    }\n  },\n\n";
-  
-  //
-  // Vue render fn
-  //
-  // This gets passed as the first param to createElement()
-  //
-  
-  _buffer << "  render() {\n";
-  _buffer << "    return h('" << meta->jsName << "', this.attrs, this.$slots);\n";
   _buffer << "  }\n";
 }
 
@@ -312,7 +291,7 @@ string VueComponentDefinitionWriter::writeMethod(MethodMeta* method, BaseClassMe
   string name = method->jsName;
   
   if (!keyword.empty()) {
-    cout << "Skipping prop " + name + " because it has a keyword " + keyword << endl;
+    cerr << "Skipping prop " + name + " because it has a keyword " + keyword << endl;
     return output.str();
   }
   
@@ -339,16 +318,10 @@ string VueComponentDefinitionWriter::writeMethod(MethodMeta* method, BaseClassMe
   
   setterType = VueComponentFormatter::current.vuePropifyTypeName(setterType);
   
-  output << "      ";
-  
-  output << getPropsEntry(setterType) << ",\n";
-  
-  output << "      ";
-  
-  output << "default: () => undefined\n";
-  
+  output << "      " << getPropsEntry(setterType) << ",\n";
+  output << "      default: () => undefined\n";
   output << "    },\n";
-  
+
   return output.str();
 }
 
@@ -377,11 +350,7 @@ string VueComponentDefinitionWriter::writeMethodComputed(MethodMeta* method, Bas
   }
   
   if (method && method->signature[1]->getType() == TypeEnum) {
-    // convert prop string to enum value
-    //    output << "      if (this." << nameWithoutSet << " !== undefined) {\n";
-    //    output << "        attrs." << nameWithoutSet << " = " << setterType << "[this." << nameWithoutSet << "];\n";
-    //    output << "      }\n\n";
-    output << "        " << nameWithoutSet << ": " << setterType << ",\n";
+    output << "    " << nameWithoutSet << ": " << setterType << ",\n";
   }
   
   return output.str();
@@ -423,28 +392,37 @@ string VueComponentDefinitionWriter::writeProperty(PropertyMeta* meta, BaseClass
   
   auto decl = clang::dyn_cast<clang::ObjCPropertyDecl>(meta->declaration);
 
-  string returnType = VueComponentFormatter::current.formatType(*meta->getter->signature[0], decl->getType());
-  returnType = VueComponentFormatter::current.vuePropifyTypeName(returnType);
+  string formattedType = VueComponentFormatter::current.formatType(*meta->getter->signature[0], decl->getType());
+  formattedType = VueComponentFormatter::current.vuePropifyTypeName(formattedType);
 
-  string retType2 = Type::tsifyType(*meta->getter->signature[0], false, true);
+  string tsifiedType = Type::tsifyType(*meta->getter->signature[0], false, true);
+  tsifiedType = VueComponentFormatter::current.vuePropifyTypeName(tsifiedType);
   
-  retType2 = VueComponentFormatter::current.vuePropifyTypeName(retType2);
-  retType2[0] = toupper(retType2[0]);
+  if (formattedType.substr(0,7) != "typeof ") {
+    tsifiedType[0] = toupper(tsifiedType[0]);
+  }
 
-
-  if (retType2 != returnType && retType2 != "any" && returnType != "JSManagedValue" && retType2 != "String") {
-    if (retType2 == "Any" && returnType != "any") {
-      
-    }
-    else {
-//      cout << "Using " << retType2 << " instead of " << returnType << endl;
-      returnType = retType2;
+  // Prefer the return type that is more specific between formatType and tsifyType
+  // These two should eventually be merged, with a param to change behavior based
+  // on if writing a .ts or .vue file
+  if (tsifiedType != formattedType) {
+    // Types are formatted differently...
+    if (formattedType != "JSManagedValue") {
+      // We prefer the bridged JSManagedValue
+      if (tsifiedType != "any" && tsifiedType != "String") {
+        // Not specific enough to prefer tsified
+        if (!(tsifiedType == "Any" && formattedType != "any")) {
+          // Here we are saying we prefer a specific formattedType
+          // over an "Any" tsifiedType
+          formattedType = tsifiedType;
+        }
+      }
     }
   }
   
   output << "    '" << name << "': {\n";
   output << "      ";
-  output << getPropsEntry(returnType, meta) << ",\n";
+  output << getPropsEntry(formattedType, meta) << ",\n";
   output << "      ";
   output << "default: () => undefined\n";
   output << "    },\n";
@@ -469,34 +447,48 @@ string VueComponentDefinitionWriter::writePropertyComputed(PropertyMeta* meta, B
   retType2 = VueComponentFormatter::current.vuePropifyTypeName(retType2);
   retType2[0] = toupper(retType2[0]);
 
-  if (retType2 != propertyType && retType2 != "any" && propertyType != "JSManagedValue" && retType2 != "String") {
-    if (retType2 == "Any" && propertyType != "any") {
-      
-    }
-    else {
-//      cout << "Using " << retType2 << " instead of " << propertyType << endl;
-      propertyType = retType2;
-    }
+  // TODO: this monstrosity is why VueComponentFormatter::current.formatType and Type::tsifyType
+  // need to be merged
+  if (retType2 != propertyType &&
+      retType2 != "any" &&
+      retType2 != "String" &&
+      !endsWith(retType2, "[]") &&
+      propertyType != "JSManagedValue" &&
+      (!(retType2 == "Any" && propertyType != "any"))) {
+    cout << "Using " << retType2 << " instead of " << propertyType << endl;
+    propertyType = retType2;
   }
+  
+  regex genericRe("NSArray<id>");
+  propertyType = regex_replace(propertyType, genericRe, "[Object]");
+  regex genericRe2("Set<\\w+>");
+  propertyType = regex_replace(propertyType, genericRe2, "Set");
 
   string name = meta->jsName;
   string kebabName = kebabCase(meta->jsName);
   
   // Native types like String and Number don't get any special treatment
-  if (VueComponentFormatter::nativeTypes[propertyType]) {
+  if (propertyType != "object" && VueComponentFormatter::nativeTypes[propertyType]) {
     return output.str();
   }
   
-  if (meta && meta->getter->signature[0]->getType() == TypeEnum) {
-    // convert prop string to enum value
-    //    output << "      if (this." << name << " !== undefined) {\n";
-    //    output << "        attrs." << name << " = " << propertyType << "[this." << name << "];\n";
-    //    output << "      }\n\n";
-    output << "        " << name << ": " << propertyType << ",\n";
+  if (meta) {
+    auto getterType = meta->getter->signature[0]->getType();
+    if (getterType == TypeEnum || getterType == TypeInterface) {
+      output << "    " << name << ": " << propertyType << ",\n";
+    }
   }
   
   return output.str();
 }
+
+unordered_set<string> VueComponentDefinitionWriter::classesToWrite = {
+  "NSResponder",
+  "NSView",
+  "NSCollectionViewItem",
+  "NSSplitViewItem",
+  "NSTableColumn"
+};
 
 string VueComponentDefinitionWriter::write()
 {
@@ -508,10 +500,9 @@ string VueComponentDefinitionWriter::write()
     
     if (meta->is(MetaType::Interface)) {
       auto interface = static_cast<InterfaceMeta*>(meta);
+      bool shouldWriteClass = classesToWrite.find(interface->jsName) != classesToWrite.end();
       
-      if (interface->isSubclassOf("NSView")
-          || interface->jsName == "NSView"
-          || interface->jsName == "NSTableColumn") {
+      if (interface->isSubclassOf("NSView") || shouldWriteClass) {
         writeVueComponent(meta, _module.first->Name);
       }
     }
@@ -540,13 +531,18 @@ void VueComponentDefinitionWriter::writeVueComponent(::Meta::Meta* meta, string 
   error_code writeError;
   auto interface = static_cast<InterfaceMeta*>(meta);
   string moduleName = interface->module->getTopLevelModule()->Name;
-  string baseModuleName = interface->base->module->getTopLevelModule()->Name;
+  string baseModuleName = "";
+  
+  if (interface->base != NULL) {
+    baseModuleName = interface->base->module->getTopLevelModule()->Name;
+  }
+  
   regex frameworkPrefixes("^NS");
+  regex viewSuffix("View$");
   string pascalName = regex_replace(interface->jsName, frameworkPrefixes, "");
   string shortName = pascalName;
   
   if (shortName != "View") {
-    regex viewSuffix("View$");
     shortName = regex_replace(pascalName, viewSuffix, "");
   }
 
@@ -560,7 +556,6 @@ void VueComponentDefinitionWriter::writeVueComponent(::Meta::Meta* meta, string 
   jsFile << "<script lang='ts'>\n";
   jsFile << "import { PropType, h, defineComponent } from '@vue/runtime-core';\n";
   
-  string noprefixBasename = regex_replace(interface->base->jsName, frameworkPrefixes, "");
 
   string basePath = ".";
 
@@ -568,19 +563,56 @@ void VueComponentDefinitionWriter::writeVueComponent(::Meta::Meta* meta, string 
     basePath = "../" + baseModuleName;
   }
   
-  if (interface->base->isSubclassOf("NSView") || interface->base->jsName == "NSView") {
-    jsFile << "import " << noprefixBasename << " from '" << basePath << "/" << noprefixBasename << ".vue';\n";
-  }
+  bool shouldExtend = false;
+  string noprefixBasename = "";
   
+  if (interface->base) {
+    shouldExtend = interface->base->isSubclassOf("NSResponder") || interface->base->jsName == "NSResponder";
+  }
+
+  if (shouldExtend) {
+    noprefixBasename = regex_replace(interface->base->jsName, frameworkPrefixes, "");
+    
+    if (noprefixBasename != "View") {
+      noprefixBasename = regex_replace(noprefixBasename, viewSuffix, "");
+    }
+    
+    if (noprefixBasename == "Text") {
+      jsFile << "import View from './View.vue';\n";
+    }
+    else {
+      jsFile << "import " << noprefixBasename << " from '" << basePath << "/" << noprefixBasename << ".vue';\n";
+    }
+  }
+  else if (interface->jsName == "NSResponder") {
+    jsFile << "import Base from '../Base.vue';\n";
+  }
+  else if (baseModuleName == "AppKit") {
+    jsFile << "import Responder from './Responder.vue';\n";
+  }
+  else {
+    jsFile << "import Responder from '../AppKit/Responder.vue';\n";
+  }
+
   jsFile << "\n";
   jsFile << "export default defineComponent({\n";
-  
   jsFile << "  name: '" << shortName << "',\n\n";
+  jsFile << "  class: '" << interface->jsName << "',\n\n";
 
-  if (interface->base->isSubclassOf("NSView") || interface->base->jsName == "NSView") {
-    jsFile << "  extends: { " + noprefixBasename + " },\n\n";
-  }
+  string mixinName = "Responder";
   
+  if (interface->jsName == "NSTextView") {
+    mixinName = "View";
+  }
+  else if (shouldExtend) {
+    mixinName = noprefixBasename;
+  }
+  else if (interface->jsName == "NSResponder") {
+    mixinName = "Base";
+  }
+
+  jsFile << "  mixins: [ " << mixinName << " ],\n\n";
+
   jsFile << buffer;
   
   jsFile << "});\n";

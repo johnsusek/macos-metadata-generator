@@ -46,7 +46,10 @@ public:
   static std::unordered_set<std::string> hiddenClasses;
   static std::string outputJSEFolder;
   static std::string outputVueFolder;
-
+  static std::unordered_set<std::string> overlaidClasses;
+  static std::unordered_set<std::string> writeInstanceInits;
+  static std::unordered_set<std::string> writeMethodImpls;
+  
   std::pair<clang::Module*, std::vector<::Meta::Meta*> >& _module;
   ::Meta::TypeFactory& _typeFactory;
   DocSetManager _docSet;
