@@ -455,7 +455,6 @@ string VueComponentDefinitionWriter::writePropertyComputed(PropertyMeta* meta, B
       !endsWith(retType2, "[]") &&
       propertyType != "JSManagedValue" &&
       (!(retType2 == "Any" && propertyType != "any"))) {
-    cout << "Using " << retType2 << " instead of " << propertyType << endl;
     propertyType = retType2;
   }
   
@@ -539,13 +538,8 @@ void VueComponentDefinitionWriter::writeVueComponent(::Meta::Meta* meta, string 
   
   regex frameworkPrefixes("^NS");
   regex viewSuffix("View$");
-  string pascalName = regex_replace(interface->jsName, frameworkPrefixes, "");
-  string shortName = pascalName;
+  string shortName = interface->jsName;
   
-  if (shortName != "View") {
-    shortName = regex_replace(pascalName, viewSuffix, "");
-  }
-
   llvm::raw_fd_ostream jsFile(jsPath + shortName + ".vue", writeError, llvm::sys::fs::F_Text);
   
   if (writeError) {
@@ -571,27 +565,23 @@ void VueComponentDefinitionWriter::writeVueComponent(::Meta::Meta* meta, string 
   }
 
   if (shouldExtend) {
-    noprefixBasename = regex_replace(interface->base->jsName, frameworkPrefixes, "");
+    noprefixBasename = interface->base->jsName;
     
-    if (noprefixBasename != "View") {
-      noprefixBasename = regex_replace(noprefixBasename, viewSuffix, "");
-    }
-    
-    if (noprefixBasename == "Text") {
-      jsFile << "import View from './View.vue';\n";
+    if (noprefixBasename == "NSText") {
+      jsFile << "import NSViewComponent from './NSView.vue';\n";
     }
     else {
-      jsFile << "import " << noprefixBasename << " from '" << basePath << "/" << noprefixBasename << ".vue';\n";
+      jsFile << "import " << noprefixBasename << "Component from '" << basePath << "/" << noprefixBasename << ".vue';\n";
     }
   }
   else if (interface->jsName == "NSResponder") {
     jsFile << "import Base from '../Base.vue';\n";
   }
   else if (baseModuleName == "AppKit") {
-    jsFile << "import Responder from './Responder.vue';\n";
+    jsFile << "import NSResponderComponent from './NSResponder.vue';\n";
   }
   else {
-    jsFile << "import Responder from '../AppKit/Responder.vue';\n";
+    jsFile << "import NSResponderComponent from '../AppKit/NSResponder.vue';\n";
   }
 
   jsFile << "\n";
@@ -599,13 +589,13 @@ void VueComponentDefinitionWriter::writeVueComponent(::Meta::Meta* meta, string 
   jsFile << "  name: '" << shortName << "',\n\n";
   jsFile << "  class: '" << interface->jsName << "',\n\n";
 
-  string mixinName = "Responder";
+  string mixinName = "NSResponderComponent";
   
   if (interface->jsName == "NSTextView") {
-    mixinName = "View";
+    mixinName = "NSViewComponent";
   }
   else if (shouldExtend) {
-    mixinName = noprefixBasename;
+    mixinName = noprefixBasename + "Component";
   }
   else if (interface->jsName == "NSResponder") {
     mixinName = "Base";
@@ -620,7 +610,7 @@ void VueComponentDefinitionWriter::writeVueComponent(::Meta::Meta* meta, string 
   
   jsFile.close();
   
-//  cout << "Wrote " << frameworkName + "/" + shortName + ".vue" << endl;
+  cout << "Wrote " << frameworkName + "/" + shortName + ".vue" << endl;
 }
 }
 
