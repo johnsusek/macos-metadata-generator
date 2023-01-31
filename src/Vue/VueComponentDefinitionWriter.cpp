@@ -482,11 +482,11 @@ string VueComponentDefinitionWriter::writePropertyComputed(PropertyMeta* meta, B
 }
 
 unordered_set<string> VueComponentDefinitionWriter::classesToWrite = {
-  "NSResponder",
   "NSView",
   "NSCollectionViewItem",
   "NSSplitViewItem",
-  "NSTableColumn"
+  "NSTableColumn",
+  "NSCollectionViewFlowLayout"
 };
 
 string VueComponentDefinitionWriter::write()
@@ -561,7 +561,7 @@ void VueComponentDefinitionWriter::writeVueComponent(::Meta::Meta* meta, string 
   string noprefixBasename = "";
   
   if (interface->base) {
-    shouldExtend = interface->base->isSubclassOf("NSResponder") || interface->base->jsName == "NSResponder";
+    shouldExtend = interface->base->isSubclassOf("NSView") || interface->base->jsName == "NSView";
   }
 
   if (shouldExtend) {
@@ -574,14 +574,14 @@ void VueComponentDefinitionWriter::writeVueComponent(::Meta::Meta* meta, string 
       jsFile << "import " << noprefixBasename << "Component from '" << basePath << "/" << noprefixBasename << ".vue';\n";
     }
   }
-  else if (interface->jsName == "NSResponder") {
+  else if (interface->jsName == "NSView") {
     jsFile << "import Base from '../Base.vue';\n";
   }
   else if (baseModuleName == "AppKit") {
-    jsFile << "import NSResponderComponent from './NSResponder.vue';\n";
+    jsFile << "import NSViewComponent from './NSView.vue';\n";
   }
   else {
-    jsFile << "import NSResponderComponent from '../AppKit/NSResponder.vue';\n";
+    jsFile << "import NSViewComponent from '../AppKit/NSView.vue';\n";
   }
 
   jsFile << "\n";
@@ -589,7 +589,7 @@ void VueComponentDefinitionWriter::writeVueComponent(::Meta::Meta* meta, string 
   jsFile << "  name: '" << shortName << "',\n\n";
   jsFile << "  class: '" << interface->jsName << "',\n\n";
 
-  string mixinName = "NSResponderComponent";
+  string mixinName = "NSViewComponent";
   
   if (interface->jsName == "NSTextView") {
     mixinName = "NSViewComponent";
@@ -597,7 +597,7 @@ void VueComponentDefinitionWriter::writeVueComponent(::Meta::Meta* meta, string 
   else if (shouldExtend) {
     mixinName = noprefixBasename + "Component";
   }
-  else if (interface->jsName == "NSResponder") {
+  else if (interface->jsName == "NSView") {
     mixinName = "Base";
   }
 

@@ -113,8 +113,10 @@ static unordered_set<string> escapedIdentifiers = {
   "arguments",
   "for",
   "defer",
+  "class",
   "self",
-  "default"
+  "default",
+  "protocol"
 };
 
 // some types can't be optional when bridged?

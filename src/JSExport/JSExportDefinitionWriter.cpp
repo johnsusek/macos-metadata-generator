@@ -18,32 +18,31 @@ using namespace std;
 
 string JSExportDefinitionWriter::outputJSEFolder = "";
 
-static unordered_set<string> hiddenMethods = {
-  "alloc",
-  "allocWith",
-  "allocWithZone"
-  "autorelease",
-  "conformsToProtocol",
-  "copy",
-  "mutableCopy",
-  "initialize",
-  "load",
-  "release",
-  "retain",
-  "new"
-  "self",
-  "zone",
-  "class",
-  "createWithCoder",
-  "subscript",
-  "errorWithDomain",
-  "createWithRoundingMode",
-  "createWithLeftExpression",
-  "createWithDescriptorType",
-  "createByResolvingBookmarkData"
-};
-
 static unordered_set<string> hiddenNames = {
+  "alloc:",
+  "allocWith:",
+  "allocWithZone"
+  "autorelease:",
+  "conformsToProtocol:",
+  "copy:",
+  "mutableCopy:",
+  "initialize:",
+  //  "load:",
+  "release:",
+  "retain:",
+  "new:"
+  "self:",
+  "zone:",
+  "class:",
+  "createWithCoder:",
+  "subscript:",
+  "errorWithDomain:",
+  "createWithRoundingMode:",
+  "createWithLeftExpression:",
+  "createWithDescriptorType:",
+  "createByResolvingBookmarkData:",
+  "propertiesToUpdate:",
+  "doubleValueForSelectedSegment:",
   "registerClass:forItemWithIdentifier:",
   "registerClass:forSupplementaryViewOfKind:withIdentifier:",
   "URLByResolvingAliasFileAtURL:options:error:",
@@ -60,7 +59,12 @@ static unordered_set<string> hiddenNames = {
 unordered_set<string> JSExportDefinitionWriter::writeInstanceInits = {
   "NSWindow",
   "NSImage",
-  "NSString"
+  "NSString",
+  "NSToolbar",
+  "NSToolbarItem",
+  "NSMenu",
+  "NSMenuItem",
+  "PDFDocument"
 };
 
 unordered_set<string> JSExportDefinitionWriter::writeMethodImpls = {
@@ -319,11 +323,11 @@ string JSExportDefinitionWriter::getMethodReturnType(MethodMeta* meta, BaseClass
 string JSExportDefinitionWriter::writeMethod(MethodMeta* method, BaseClassMeta* owner, string keyword, string metaJsName)
 {
   ostringstream output;
-  
-  if (hiddenMethods.find(method->jsName) != hiddenMethods.end()) {
+
+  if (hiddenNames.find(method->name) != hiddenNames.end()) {
     return output.str();
   }
-  
+
   const clang::ObjCMethodDecl& methodDecl = *clang::dyn_cast<clang::ObjCMethodDecl>(method->declaration);
   auto& typeArg = *method->signature[0];
 
@@ -416,8 +420,8 @@ string JSExportDefinitionWriter::writeMethod(CompoundMemberMap<MethodMeta>::valu
 {
   string output;
   MethodMeta* method = methodPair.second.second;
-
-  if (hiddenMethods.find(method->jsName) != hiddenMethods.end()) {
+  
+  if (hiddenNames.find(method->name) != hiddenNames.end()) {
     return output;
   }
   
@@ -439,11 +443,15 @@ string JSExportDefinitionWriter::writeMethod(CompoundMemberMap<MethodMeta>::valu
 
 void JSExportDefinitionWriter::writeProperty(PropertyMeta* meta, BaseClassMeta* owner, InterfaceMeta* target, CompoundMemberMap<PropertyMeta> baseClassProperties)
 {
-  if (hiddenMethods.find(meta->jsName) != hiddenMethods.end()) {
+  if (hiddenNames.find(meta->name) != hiddenNames.end()) {
     return;
   }
-  
+
   string propValue = writeProperty(meta, target);
+  
+  if (propValue.empty()) {
+    return;
+  }
   
   regex re(".*JSValue.*");
   bool returnsJSValue = regex_match(propValue, re);
@@ -553,11 +561,6 @@ void JSExportDefinitionWriter::writeMethodImpl(MethodMeta* method, BaseClassMeta
 
   string implName = method->jsName;
   
-//  if (method->getParamsAsString(owner).find("JSValue") != string::npos) {
-//    implName = method->builtName();
-//  }
-  
-//  auto methodImplParams = method->getParamsAsString(owner, ParamCallType::Implementation);
   auto methodImplParams = method->getParamsAsString(owner);
 
   _buffer << "func " << implName << methodImplParams;
@@ -701,52 +704,59 @@ void JSExportDefinitionWriter::writeProto(ProtocolMeta* meta) {
     protoName = meta->name;
   }
 
-  _buffer << "@objc(" << protoName << ") protocol " << protoName << "Exports: JSExport";
+  _buffer << "// @objc(" << protoName << "Handler) class " << protoName << "Handler: JavascriptDelegate";
   
   map<string, PropertyMeta*> conformedProtocolsProperties;
   map<string, MethodMeta*> conformedProtocolsMethods;
   
-  if (meta->protocols.size()) {
-    _buffer << ", ";
-    
-    for (size_t i = 0; i < meta->protocols.size(); i++) {
-      transform(
-                meta->protocols[i]->instanceProperties.begin(),
-                meta->protocols[i]->instanceProperties.end(),
-                inserter(conformedProtocolsProperties,
-                         conformedProtocolsProperties.end()
-                         ),
-                []
-                (PropertyMeta* propertyMeta) {
-        return make_pair(propertyMeta->name, propertyMeta);
-      });
-      transform(
-                meta->protocols[i]->instanceMethods.begin(),
-                meta->protocols[i]->instanceMethods.end(),
-                inserter(conformedProtocolsMethods,
-                         conformedProtocolsMethods.end()
-                         ),
-                []
-                (MethodMeta* methodMeta) {
-        return make_pair(methodMeta->name, methodMeta);
-      });
-      
-      _buffer << meta->protocols[i]->jsName + "Exports";
-      
-      if (i < meta->protocols.size() - 1) {
-        _buffer << ", ";
-      }
-    }
-  }
+//  if (meta->protocols.size()) {
+//    _buffer << ", ";
+//
+//    for (size_t i = 0; i < meta->protocols.size(); i++) {
+//      transform(
+//                meta->protocols[i]->instanceProperties.begin(),
+//                meta->protocols[i]->instanceProperties.end(),
+//                inserter(conformedProtocolsProperties,
+//                         conformedProtocolsProperties.end()
+//                         ),
+//                []
+//                (PropertyMeta* propertyMeta) {
+//        return make_pair(propertyMeta->name, propertyMeta);
+//      });
+//      transform(
+//                meta->protocols[i]->instanceMethods.begin(),
+//                meta->protocols[i]->instanceMethods.end(),
+//                inserter(conformedProtocolsMethods,
+//                         conformedProtocolsMethods.end()
+//                         ),
+//                []
+//                (MethodMeta* methodMeta) {
+//        return make_pair(methodMeta->name, methodMeta);
+//      });
+//
+//      _buffer << meta->protocols[i]->jsName + "Exports";
+//
+//      if (i < meta->protocols.size() - 1) {
+//        _buffer << ", ";
+//      }
+//    }
+//  }
   
-  _buffer << " {" << endl;
+  _buffer << "// {" << endl;
 }
 
 void JSExportDefinitionWriter::writeProto(string protocolName, InterfaceMeta* meta) {
   _buffer << "@objc(" << protocolName << ") protocol " << protocolName << "Exports: JSExport";
   
   if (meta->base) {
-    _buffer << ", " << meta->base->jsName << "Exports";
+    string baseName = meta->base->jsName ;
+    bool isProtoClass = overlaidClasses.find(protocolName) != overlaidClasses.end();
+    
+    if (isProtoClass) {
+      baseName = meta->name;
+    }
+
+    _buffer << ", " << baseName << "Exports";
   }
   
   _buffer << " {" << endl;
@@ -758,9 +768,7 @@ string JSExportDefinitionWriter::writeProperty(PropertyMeta* meta, BaseClassMeta
   
   string name = meta->jsName;
 
-  output << "var ";
-  
-  output << ::Meta::sanitizeIdentifierForSwift(name);
+  output << "var " << ::Meta::sanitizeIdentifierForSwift(name);
   
   bool ignorePointerType = false;
   
@@ -795,9 +803,9 @@ string JSExportDefinitionWriter::writeProperty(PropertyMeta* meta, BaseClassMeta
   else if (returnType == "NSLayoutAnchor") {
     returnType = "JSValue";
   }
-
+  
   // Property return type
-  output << ": " << returnType;
+  output << ": " << Type::nameForJSExport(returnType);
 
   bool isNullable = false;
   
@@ -810,6 +818,14 @@ string JSExportDefinitionWriter::writeProperty(PropertyMeta* meta, BaseClassMeta
       // Nullable in proto but not impl? How to check for this?
       isNullable = false;
     }
+  }
+  
+  if (returnType == "OpaqueCMTimebase") {
+    return "";
+  }
+  
+  if (returnType == "__SecTrust") {
+    return "";
   }
   
   if (isNullable) {
@@ -865,10 +881,10 @@ void JSExportDefinitionWriter::visit(ProtocolMeta* meta)
   }
   
   for (MethodMeta* method : meta->instanceMethods) {
-    if (hiddenMethods.find(method->jsName) != hiddenMethods.end() ) {
+    if (hiddenNames.find(method->name) != hiddenNames.end()) {
       continue;
     }
-    
+
     string output = writeMethod(method, meta);
     
     if (output.size()) {
@@ -881,12 +897,24 @@ void JSExportDefinitionWriter::visit(ProtocolMeta* meta)
           && meta->jsName != "URLSession") {
         _buffer << "// jsvalue ";
       }
+      
+      if (StringUtils::ends_with(metaName, "Delegate") || StringUtils::ends_with(metaName, "Datasource")) {
+        _buffer << "  // " << output << " {" << endl;
 
-      _buffer << "  " << output << endl;
+        string body = "return try? self.handleDelegateInJS(\"" + method->name + "\", [itemIdentifier as Any, flag, toolbar]) as NSToolbarItem?";
+        string methodParams = method->getParamsAsString(meta);
+        
+        _buffer << "    //" << body << endl;
+        _buffer << "    //" << methodParams << endl;
+        _buffer << "  // }" << endl;
+      }
+      else {
+        _buffer << "  " << output << endl;
+      }
     }
   }
   
-  _buffer << "}" << endl << endl;
+  _buffer << "//}" << endl << endl;
 }
 
 // MARK: - Visit Interface
@@ -907,10 +935,6 @@ void JSExportDefinitionWriter::visit(InterfaceMeta* meta)
   map<string, bool> addedConstructors = {};
 
   for (MethodMeta* method : meta->staticMethods) {
-    if (hiddenMethods.find(method->jsName) != hiddenMethods.end()) {
-      continue;
-    }
-    
     if (hiddenNames.find(method->name) != hiddenNames.end()) {
       continue;
     }
@@ -944,12 +968,12 @@ void JSExportDefinitionWriter::visit(InterfaceMeta* meta)
     compoundStaticMethods.emplace(method->name, make_pair(meta, method));
   }
   
+  if (meta->jsName == "WKWebView") {
+    cout << "";
+  }
+  
   CompoundMemberMap<MethodMeta> compoundInstanceMethods;
   for (MethodMeta* method : meta->instanceMethods) {
-    if (hiddenMethods.find(method->jsName) != hiddenMethods.end()) {
-      continue;
-    }
-    
     if (hiddenNames.find(method->name) != hiddenNames.end()) {
       continue;
     }
@@ -975,13 +999,14 @@ void JSExportDefinitionWriter::visit(InterfaceMeta* meta)
     bool isSetterForProperty = false;
     
     for (PropertyMeta* property : meta->instanceProperties) {
-      if (property->setter && method->jsName == property->setter->jsName) {
+      if (property->setter && method->name == property->setter->name) {
         isSetterForProperty = true;
         break;
       }
     }
 
     if (isSetterForProperty) {
+      cerr << "Skipping " << method->name << "because it is a setter for a property" << endl;
       continue;
     }
     
@@ -1180,7 +1205,7 @@ void JSExportDefinitionWriter::visit(InterfaceMeta* meta)
       PropertyMeta* propertyMeta = propertyPair.second.second;
       
       if (propertyMeta->unavailable) {
-        _buffer << "// ";
+        _buffer << "// unavailable";
       }
       
       this->writeProperty(propertyMeta, owner, meta, baseClassStaticProperties);
@@ -1215,8 +1240,8 @@ void JSExportDefinitionWriter::visit(InterfaceMeta* meta)
     for (auto& methodPair : compoundInstanceMethods) {
       MethodMeta* method = methodPair.second.second;
       
-      if (ownInstanceProperties.find(methodPair.first) != ownInstanceProperties.end()) {
-        cerr << "Skipping method `" << method->jsName << "` because property with same name exists " << endl;
+      if (ownInstanceProperties.find(method->builtName()) != ownInstanceProperties.end()) {
+        cerr << "Skipping method `" << method->name << "` because property with same name exists " << endl;
         continue;
       }
       
@@ -1254,7 +1279,7 @@ void JSExportDefinitionWriter::visit(InterfaceMeta* meta)
         _buffer << propertyMeta->dumpDeclComments() << endl;
         
         if (propertyMeta->unavailable) {
-          _buffer << "// ";
+          _buffer << "// unavailable ";
         }
         
         this->writeProperty(propertyMeta, owner, meta, baseClassInstanceProperties);
@@ -1294,45 +1319,59 @@ void JSExportDefinitionWriter::visit(CategoryMeta* meta)
 
 void JSExportDefinitionWriter::visit(FunctionMeta* meta)
 {
-  if (meta->module->Name == "Dispatch") {
-    cout << "FunctionMeta: " << meta->module->Name << ": " << meta->name << endl;
-  }
+//  if (meta->module->Name == "Dispatch") {
+//    cout << "FunctionMeta: " << meta->module->Name << ": " << meta->name << endl;
+//  }
   _buffer << meta->dumpDeclComments() << endl;
-  _buffer << "// " << meta->name << endl;
+  _buffer << "  // function " << meta->jsName << endl;
 }
 
 void JSExportDefinitionWriter::visit(StructMeta* meta)
 {
+  _buffer << meta->dumpDeclComments() << endl;
+  _buffer << "  // struct " << meta->jsName << endl;
 }
 
 void JSExportDefinitionWriter::visit(UnionMeta* meta)
 {
+  _buffer << meta->dumpDeclComments() << endl;
+  _buffer << "  // union " << meta->jsName << endl;
 }
 
 void JSExportDefinitionWriter::visit(EnumMeta* meta)
 {
+  _buffer << meta->dumpDeclComments() << endl;
+  _buffer << " // enum " << meta->jsName << endl;
 }
 
 void JSExportDefinitionWriter::visit(VarMeta* meta)
 {
-  if (meta->module->Name == "Dispatch") {
-    cout << "VarMeta: " << meta->module->Name << ": " << meta->name << endl;
-  }
+//  if (meta->module->Name == "Dispatch") {
+//    cout << "VarMeta: " << meta->module->Name << ": " << meta->jsName << endl;
+//  }
+  _buffer << meta->dumpDeclComments() << endl;
+  _buffer << "  // var " << meta->jsName << endl;
 }
 
 void JSExportDefinitionWriter::visit(MethodMeta* meta)
 {
-  if (meta->module->Name == "Dispatch") {
-    cout << "MethodMeta: " << meta->module->Name << ": " << meta->name << endl;
-  }
+//  if (meta->module->Name == "Dispatch") {
+//    cout << "MethodMeta: " << meta->module->Name << ": " << meta->jsName << endl;
+//  }
+  _buffer << meta->dumpDeclComments() << endl;
+  _buffer << "  // method " << meta->jsName << endl;
 }
 
 void JSExportDefinitionWriter::visit(PropertyMeta* meta)
 {
+  _buffer << meta->dumpDeclComments() << endl;
+  _buffer << "  // property " << meta->jsName << endl;
 }
 
 void JSExportDefinitionWriter::visit(EnumConstantMeta* meta)
 {
+  _buffer << meta->dumpDeclComments() << endl;
+  _buffer << "  // enum " << meta->jsName << endl;
 }
 
 string JSExportDefinitionWriter::write()

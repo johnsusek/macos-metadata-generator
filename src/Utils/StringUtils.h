@@ -15,6 +15,15 @@ static inline void rtrim(std::string &s) {
   }).base(), s.end());
 }
 
+static inline std::string replaceString(std::string subject, const std::string& search, const std::string& replace)
+{
+  size_t pos = 0;
+  while ((pos = subject.find(search, pos)) != std::string::npos) {
+    subject.replace(pos, search.length(), replace);
+    pos += replace.length();
+  }
+  return subject;
+}
 
 static inline bool starts_with(const std::string value, const std::string prefix)
 {

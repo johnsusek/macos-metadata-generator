@@ -34,7 +34,8 @@ static std::unordered_set<std::string> nonNullable;
 enum ParamCallType {
   Definition = 0, // initWithFrame(_: CGRect)
   Implementation, // initWithFrame(_ frame: CGRect)
-  Call // initWithFrame(frame)
+  Call, // initWithFrame(frame)
+  Delegate // [frame]
 };
 
 struct Version {

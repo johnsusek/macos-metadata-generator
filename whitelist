@@ -1,7 +1,9 @@
-ObjectiveC*
 Foundation*
 AppKit*
 Core*
 Quartz*
 AV*
 Dispatch*
+PDFKit*
+CoreMedia*
+WebKit*

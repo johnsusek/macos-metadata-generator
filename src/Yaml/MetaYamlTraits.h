@@ -326,10 +326,10 @@ namespace yaml {
         if (!meta->demangledName.empty()) {
             io.mapRequired("DemangledName", meta->demangledName);
         }
-        if (meta->is(Meta::MetaType::Interface)) {
-          bool isView = meta->as<Meta::InterfaceMeta>().isSubclassOf("NSView");
-          io.mapRequired("isView", isView);
-        }
+      if (meta->is(Meta::MetaType::Interface)) {
+        bool isView = meta->as<Meta::InterfaceMeta>().isSubclassOf("NSView");
+        io.mapRequired("isView", isView);
+      }
         io.mapRequired("Filename", meta->fileName);
         io.mapRequired("Module", meta->module);
         io.mapOptional("IntroducedIn", meta->introducedIn, UNKNOWN_VERSION);
